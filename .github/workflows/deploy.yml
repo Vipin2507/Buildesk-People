@@ -1,0 +1,33 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-hrms
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to the HRMS server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            bash -lc 'set -euo pipefail
+            cd /home/cravingcodetech-hrms/htdocs/hrms.cravingcodetech.in
+            git -c safe.directory=/home/cravingcodetech-hrms/htdocs/hrms.cravingcodetech.in fetch origin main
+            git -c safe.directory=/home/cravingcodetech-hrms/htdocs/hrms.cravingcodetech.in reset --hard origin/main
+            npm install
+            npm run build
+            chown -R cravingcodetech-hrms:cravingcodetech-hrms .
+            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 restart buildesk-people
+            curl -fsS http://127.0.0.1:3010/api/health
+            echo'
