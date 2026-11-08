@@ -1,4 +1,6 @@
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { findAccountByEmail, isValidEmail } from "../src/lib/auth.ts";
 import { hasPermission } from "../src/lib/access.ts";
 import { sessionEmployee } from "../src/lib/session.ts";
@@ -9,17 +11,69 @@ import { createSession, deleteSession, readSession, readWorkspace, resetWorkspac
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { presentWorkspace } from "./present.ts";
 
-const PORT = Number(process.env.BUILDESK_API_PORT ?? 8787);
+const PORT = Number(process.env.PORT ?? process.env.BUILDESK_API_PORT ?? 8787);
+const HOST = process.env.HOST ?? "127.0.0.1";
 const COOKIE = "buildesk_session";
+const DIST = resolve(process.cwd(), "dist");
 
 function send(response: ServerResponse, status: number, payload: unknown, extraHeaders: Record<string, string> = {}): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extraHeaders });
   response.end(JSON.stringify(payload));
 }
 
-function cookieHeader(token: string | null): string {
-  if (!token) return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
-  return `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${14 * 24 * 60 * 60}`;
+function cookieHeader(token: string | null, request: IncomingMessage): string {
+  const forwarded = request.headers["x-forwarded-proto"];
+  const secure = forwarded === "https" || (Array.isArray(forwarded) && forwarded.includes("https"));
+  const flags = `HttpOnly; SameSite=Lax; Path=/${secure ? "; Secure" : ""}`;
+  if (!token) return `${COOKIE}=; ${flags}; Max-Age=0`;
+  return `${COOKIE}=${token}; ${flags}; Max-Age=${14 * 24 * 60 * 60}`;
+}
+
+function contentType(file: string): string {
+  switch (extname(file)) {
+    case ".html": return "text/html; charset=utf-8";
+    case ".js":
+    case ".mjs": return "text/javascript; charset=utf-8";
+    case ".css": return "text/css; charset=utf-8";
+    case ".svg": return "image/svg+xml";
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".webp": return "image/webp";
+    case ".ico": return "image/x-icon";
+    case ".json": return "application/json; charset=utf-8";
+    case ".woff": return "font/woff";
+    case ".woff2": return "font/woff2";
+    default: return "application/octet-stream";
+  }
+}
+
+function serveApp(request: IncomingMessage, response: ServerResponse, pathname: string): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  if (pathname.startsWith("/api/")) return false;
+  const relative = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, "");
+  let file = resolve(DIST, relative);
+  if (file !== DIST && !file.startsWith(DIST + sep)) {
+    response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Forbidden");
+    return true;
+  }
+  if (!existsSync(file) || statSync(file).isDirectory()) file = join(DIST, "index.html");
+  if (!existsSync(file)) {
+    send(response, 503, { ok: false, message: "The site has not been built yet. Run npm run build." });
+    return true;
+  }
+  const html = extname(file) === ".html";
+  response.writeHead(200, {
+    "content-type": contentType(file),
+    "cache-control": html ? "no-cache" : "public, max-age=31536000, immutable",
+  });
+  if (request.method === "HEAD") {
+    response.end();
+    return true;
+  }
+  createReadStream(file).pipe(response);
+  return true;
 }
 
 function tokenFrom(request: IncomingMessage): string | null {
@@ -85,7 +139,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/auth/signout") {
       deleteSession(tokenFrom(request));
-      send(response, 200, { ok: true }, { "set-cookie": cookieHeader(null) });
+      send(response, 200, { ok: true }, { "set-cookie": cookieHeader(null, request) });
       return;
     }
 
@@ -116,7 +170,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       const token = createSession(account.id);
-      send(response, 200, { ok: true, state: presentWorkspace(source, account.id) }, { "set-cookie": cookieHeader(token) });
+      send(response, 200, { ok: true, state: presentWorkspace(source, account.id) }, { "set-cookie": cookieHeader(token, request) });
       return;
     }
 
@@ -169,7 +223,7 @@ const server = createServer(async (request, response) => {
       const saved = { ...outcome.state, currentUserId: null };
       writeWorkspace(saved);
       const token = createSession(account.id);
-      send(response, 200, { ok: true, state: presentWorkspace(saved, account.id) }, { "set-cookie": cookieHeader(token) });
+      send(response, 200, { ok: true, state: presentWorkspace(saved, account.id) }, { "set-cookie": cookieHeader(token, request) });
       return;
     }
 
@@ -223,7 +277,7 @@ const server = createServer(async (request, response) => {
         response,
         200,
         { ok: true, authenticated: Boolean(kept), state: kept ? presentWorkspace(fresh, kept) : null, toast: "Workspace reset from the server seed." },
-        { "set-cookie": cookieHeader(token) },
+        { "set-cookie": cookieHeader(token, request) },
       );
       return;
     }
@@ -256,11 +310,12 @@ const server = createServer(async (request, response) => {
         response,
         200,
         { result: outcome.result, toast: outcome.toast, tone: outcome.tone ?? "success", state: still ? presentWorkspace(saved, accountId) : null },
-        still ? {} : { "set-cookie": cookieHeader(null) },
+        still ? {} : { "set-cookie": cookieHeader(null, request) },
       );
       return;
     }
 
+    if (serveApp(request, response, url.pathname)) return;
     send(response, 404, { ok: false, message: "Not found." });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The server could not complete that request.";
@@ -268,6 +323,6 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Buildesk People API listening on http://127.0.0.1:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Buildesk People listening on http://${HOST}:${PORT}`);
 });
