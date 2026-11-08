@@ -62,7 +62,7 @@ export function Shell() {
   const [notesOpen, setNotesOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const theme = useThemeChoice();
+  const theme = useThemeChoice(user?.id ?? null);
   const searchRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef<HTMLDivElement>(null);

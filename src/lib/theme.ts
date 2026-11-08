@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
 
-export const THEME_KEY = "buildesk-people-theme";
+const THEME_PREFIX = "buildesk-people-theme";
 
 export type ThemeChoice = "light" | "dark" | "system";
 
-export function readThemeChoice(): ThemeChoice {
+export function themeStorageKey(userId: string): string {
+  return `${THEME_PREFIX}:${userId}`;
+}
+
+export function readThemeChoice(userId: string | null): ThemeChoice {
+  if (!userId) return "light";
   try {
-    const raw = localStorage.getItem(THEME_KEY);
-    return raw === "light" || raw === "dark" ? raw : "system";
+    const raw = localStorage.getItem(themeStorageKey(userId));
+    if (raw === "light" || raw === "dark" || raw === "system") return raw;
+    return "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -24,23 +30,29 @@ export function applyTheme(choice: ThemeChoice): void {
   document.documentElement.style.colorScheme = resolved;
 }
 
-export function storeThemeChoice(choice: ThemeChoice): void {
+export function storeThemeChoice(userId: string, choice: ThemeChoice): void {
   try {
-    if (choice === "system") localStorage.removeItem(THEME_KEY);
-    else localStorage.setItem(THEME_KEY, choice);
+    localStorage.setItem(themeStorageKey(userId), choice);
   } catch {
     /* Theme still applies for this session if storage is blocked. */
   }
   applyTheme(choice);
 }
 
+/** First paint and the signed-out screen stay light. A saved choice is applied after sign-in. */
 export function applyStoredTheme(): void {
-  applyTheme(readThemeChoice());
+  applyTheme("light");
 }
 
-export function useThemeChoice() {
-  const [choice, setChoice] = useState<ThemeChoice>(readThemeChoice);
-  const [resolved, setResolved] = useState<"light" | "dark">(() => resolveTheme(readThemeChoice()));
+export function useThemeChoice(userId: string | null) {
+  const [choice, setChoice] = useState<ThemeChoice>(() => readThemeChoice(userId));
+  const [resolved, setResolved] = useState<"light" | "dark">(() => resolveTheme(readThemeChoice(userId)));
+
+  useEffect(() => {
+    const stored = readThemeChoice(userId);
+    setChoice(stored);
+  }, [userId]);
+
   useEffect(() => {
     applyTheme(choice);
     setResolved(resolveTheme(choice));
@@ -53,9 +65,16 @@ export function useThemeChoice() {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [choice]);
+
+  useEffect(() => {
+    return () => applyTheme("light");
+  }, []);
+
   const update = (next: ThemeChoice) => {
-    storeThemeChoice(next);
+    if (userId) storeThemeChoice(userId, next);
+    else applyTheme(next);
     setChoice(next);
   };
+
   return { choice, resolved, update };
 }
