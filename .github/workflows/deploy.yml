@@ -28,6 +28,16 @@ jobs:
             npm install
             npm run build
             chown -R cravingcodetech-hrms:cravingcodetech-hrms .
-            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 restart buildesk-people
-            curl -fsS http://127.0.0.1:3010/api/health
-            echo'
+            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 startOrRestart ecosystem.config.cjs --update-env
+            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 save
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+              if curl -fsS http://127.0.0.1:3010/api/health; then
+                echo
+                exit 0
+              fi
+              sleep 1
+            done
+            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 status || true
+            sudo -u cravingcodetech-hrms env PATH="$PATH" pm2 logs buildesk-people --lines 50 --nostream || true
+            ss -tlnp | grep -E "3010|8787" || true
+            exit 1'
