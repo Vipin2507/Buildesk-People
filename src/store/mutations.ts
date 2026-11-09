@@ -922,7 +922,32 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
   };
   const employees = existing ? state.employees.map((item) => (item.id === saved.id ? saved : item)) : [...state.employees, saved];
   const verb = !existing ? "Added" : draft.status === "inactive" && existing.status !== "inactive" ? "Deactivated" : "Updated";
-  return ok(pushAudit({ ...state, employees }, actor.id, "people", `${verb} the employee record for ${fullName(saved)}.`), `${verb} ${fullName(saved)}.`, saved.id);
+  const linked = state.accounts.some((item) => item.employeeId === saved.id);
+  const sameEmail = state.accounts.find((item) => item.email === saved.email);
+  let accounts = state.accounts;
+  let loginNote = "";
+  if (hasPermission(state, actor, "users.manage") && !linked && !sameEmail) {
+    const stamp = nowIso();
+    accounts = [{
+      id: uid("usr"),
+      email: saved.email,
+      displayName: fullName(saved),
+      role: saved.role,
+      status: "invited",
+      departmentId: saved.departmentId,
+      employeeId: saved.id,
+      createdAt: stamp,
+      updatedAt: stamp,
+      invitedAt: stamp,
+      activatedAt: null,
+      suspendedAt: null,
+      deactivatedAt: null,
+      passwordHash: null,
+    }, ...state.accounts];
+    loginNote = ` ${saved.email} can sign in and choose a password. No email is sent.`;
+  }
+  const summary = `${verb} the employee record for ${fullName(saved)}.${loginNote}`;
+  return ok(pushAudit({ ...state, employees, accounts }, actor.id, "people", summary), `${verb} ${fullName(saved)}.${loginNote}`, saved.id);
 }
 
 export function updateCompensation(state: AppState, employeeId: string, monthlyGross: number): Outcome {

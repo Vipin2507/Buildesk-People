@@ -84,6 +84,7 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
         {employee
           ? "Update the work record. Salary stays on the Salary details section."
           : "Work details and date of birth are required. Phone, address, and emergency contact can be left blank."}
+        {can("users.manage") ? " If this work email has no login yet, one is created. No email is sent. The first sign-in is where they choose a password." : ""}
       </p>
       {serverError && <Banner tone="error">{serverError}</Banner>}
       <fieldset className="form-section">

@@ -185,7 +185,17 @@ const server = createServer(async (request, response) => {
       }
       const source = readWorkspace();
       const account = findAccountByEmail(source.accounts, email);
-      if (!account || (account.passwordHash && !verifyPassword(password, account.passwordHash))) {
+      if (!account) {
+        const listed = source.employees.some((item) => item.email.toLowerCase() === email.trim().toLowerCase());
+        send(response, 401, {
+          ok: false,
+          message: listed
+            ? "This person is in the directory, but no login has been created. HR adds the login in User Management. The first sign-in is where the password is chosen."
+            : "The email or password is incorrect.",
+        });
+        return;
+      }
+      if (account.passwordHash && !verifyPassword(password, account.passwordHash)) {
         send(response, 401, { ok: false, message: "The email or password is incorrect." });
         return;
       }
