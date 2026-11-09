@@ -254,6 +254,14 @@ img { max-width: 100%; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .stat { display: flex; gap: 12px; padding: 14px; text-decoration: none; color: inherit; min-height: 96px; }
+button.stat { width: 100%; text-align: left; cursor: pointer; font: inherit; }
+button.stat[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+.action-menu { position: relative; display: inline-flex; }
+.menu .menu-danger { color: var(--danger); }
+.user-form-status { margin: 0 0 12px; }
+.user-note { margin: -8px 0 16px; }
+.modal.modal-wide.modal-form { width: min(860px, 100%); }
+.menu.menu-fixed { position: fixed; z-index: 40; min-width: 220px; }
 .stat:hover { border-color: var(--border-strong); }
 .stat-icon, .qi {
   width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none;
@@ -482,6 +490,8 @@ img.avatar { object-fit: cover; display: block; }
 }
 @media (max-width: 720px) {
   .form-grid, .dl { grid-template-columns: 1fr; }
+  .modal-back:has(.modal-form) { padding: 0; align-items: stretch; }
+  .modal.modal-form { width: 100%; height: 100%; max-height: none; border-radius: 0; }
   .place-grid { grid-template-columns: 1fr; }
   .punch-row { flex-direction: column; align-items: stretch; }
   .punch-row .field { max-width: none; }

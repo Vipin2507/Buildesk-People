@@ -950,6 +950,42 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
   return ok(pushAudit({ ...state, employees, accounts }, actor.id, "people", summary), `${verb} ${fullName(saved)}.${loginNote}`, saved.id);
 }
 
+export function deleteEmployee(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "people.manage");
+  if (!isEmployee(actor)) return actor;
+  const employee = person(state, id);
+  if (!employee) return fail(state, "That employee was not found.", true);
+  if (employee.id === actor.id) return fail(state, "You can't delete your own record.", true);
+  if (state.employees.some((item) => item.managerId === employee.id)) {
+    return fail(state, "Choose a new manager for the people who report to this employee before deleting them.", true);
+  }
+  const reasons: string[] = [];
+  if (state.attendance.some((item) => item.employeeId === id) || state.regularizations.some((item) => item.employeeId === id)) reasons.push("attendance");
+  if (state.leaveRequests.some((item) => item.employeeId === id) || state.compOff.some((item) => item.employeeId === id)) reasons.push("leave");
+  if (state.expenses.some((item) => item.employeeId === id) || state.insurance.some((item) => item.employeeId === id)) reasons.push("expenses");
+  if (state.tickets.some((item) => item.employeeId === id || item.assigneeId === id)) reasons.push("tickets");
+  if (state.assets.some((item) => item.assignedTo === id)) reasons.push("assigned assets");
+  if (state.documents.some((item) => item.employeeId === id)) reasons.push("documents");
+  if (state.acknowledgements.some((item) => item.employeeId === id)) reasons.push("policy acknowledgements");
+  if (state.payslips.some((item) => item.employeeId === id) || state.payrollRuns.some((run) => run.lines.some((line) => line.employeeId === id))) reasons.push("payroll");
+  if (reasons.length > 0) {
+    return fail(state, `${fullName(employee)} has ${reasons.join(", ")} on record. Set their status to Inactive instead of deleting them.`, true);
+  }
+  const account = state.accounts.find((item) => item.employeeId === id || item.email === employee.email);
+  if (account && blocksLastAdmin(state, account, account.role, "deactivated")) {
+    return fail(state, "The last active System admin can't be deleted.", true);
+  }
+  const next: AppState = {
+    ...state,
+    employees: state.employees.filter((item) => item.id !== id),
+    accounts: account ? state.accounts.filter((item) => item.id !== account.id) : state.accounts,
+    notifications: state.notifications.filter((item) => item.userId !== id && item.userId !== account?.id),
+    currentUserId: state.currentUserId === account?.id ? null : state.currentUserId,
+  };
+  const login = account ? " and their login" : "";
+  return ok(pushAudit(next, actor.id, "people", `Deleted the employee record for ${fullName(employee)}${login}.`), `${fullName(employee)} was removed from the directory.`);
+}
+
 export function updateCompensation(state: AppState, employeeId: string, monthlyGross: number): Outcome {
   const actor = requireUser(state, "people.compensation");
   if (!isEmployee(actor)) return actor;
@@ -1441,6 +1477,9 @@ export function saveAccount(state: AppState, input: AccountDraft & { id?: string
   if (departmentId && !state.departments.some((item) => item.id === departmentId)) return fail(state, "Choose a department, or leave it blank.");
   const existing = input.id ? state.accounts.find((item) => item.id === input.id) : undefined;
   if (input.id && !existing) return fail(state, "That account is no longer available.", true);
+  if (existing && existing.id === state.currentUserId && input.role !== existing.role) {
+    return fail(state, "You can't change your own role.", true);
+  }
   if (existing && blocksLastAdmin(state, existing, input.role, existing.status)) {
     return fail(state, "The last active System admin can't be demoted.", true);
   }
@@ -1473,6 +1512,7 @@ function setAccountStatus(state: AppState, id: string, status: UserAccount["stat
   if (!isEmployee(actor)) return actor;
   const account = state.accounts.find((item) => item.id === id);
   if (!account) return fail(state, "That account is no longer available.", true);
+  if (account.id === state.currentUserId && status !== "active") return fail(state, "You can't suspend or deactivate your own login.", true);
   if (blocksLastAdmin(state, account, account.role, status)) return fail(state, "The last active System admin can't be suspended or deactivated.", true);
   const stamp = nowIso();
   const next: UserAccount = {
@@ -1523,6 +1563,7 @@ export function deleteAccount(state: AppState, id: string): Outcome {
   if (!isEmployee(actor)) return actor;
   const account = state.accounts.find((item) => item.id === id);
   if (!account) return fail(state, "That account is no longer available.", true);
+  if (account.id === state.currentUserId) return fail(state, "You can't delete your own login.", true);
   if (blocksLastAdmin(state, account, account.role, "deactivated")) return fail(state, "The last active System admin can't be deleted.", true);
   if (account.employeeId) return fail(state, "This login is linked to an employee record. Deactivate it so payroll and history stay intact.", true);
   const referenced = state.audits.some((item) => item.actorId === id) || state.notifications.some((item) => item.userId === id);

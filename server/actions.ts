@@ -1,6 +1,7 @@
 import type { Outcome } from "../src/store/mutations.ts";
 import * as m from "../src/store/mutations.ts";
 import type { AppState } from "../src/types.ts";
+import { deletePhoto } from "./photos.ts";
 
 function noted(state: AppState, toast?: string): Outcome {
   return { state, result: { ok: true }, toast };
@@ -37,6 +38,11 @@ export const actions: Record<string, Handler> = {
   acknowledgeAsset: (state, body) => m.acknowledgeAsset(state, body.id),
   transitionAsset: (state, body) => m.transitionAsset(state, body.id, body.action, body.comment, body.transferTo),
   saveEmployee: (state, body) => m.saveEmployee(state, body),
+  deleteEmployee: (state, body) => {
+    const outcome = m.deleteEmployee(state, body.id);
+    if (outcome.result.ok && typeof body.id === "string") deletePhoto(body.id);
+    return outcome;
+  },
   updateCompensation: (state, body) => m.updateCompensation(state, body.id, body.gross),
   updateProfile: (state, body) => m.updateProfile(state, body),
   createPayrollRun: (state, body) => m.createPayrollRun(state, body.year, body.monthIndex),

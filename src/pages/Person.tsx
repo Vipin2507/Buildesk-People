@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { EmployeeForm } from "../components/employee-form";
 import { Avatar, Banner, Button, DataTable, EmptyState, Field, Modal, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { punchLocationText } from "../domain/location";
@@ -29,8 +29,12 @@ const SECTIONS: { id: ProfileSection; label: string }[] = [
 
 export function Person() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { state, user, can, actions } = useApp();
   const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  const [removeBusy, setRemoveBusy] = useState(false);
   const [tab, setTab] = useTab(SECTIONS.map((item) => item.id), "personal");
   const employee = state.employees.find((item) => item.id === id);
   if (!user) return null;
@@ -43,7 +47,14 @@ export function Person() {
         title={fullName(employee)}
         subtitle={`${employee.employeeCode} · ${employee.jobTitle}`}
         crumbs={[{ label: "People", to: "/people" }, { label: fullName(employee) }]}
-        actions={can("people.manage") ? <Button onClick={() => setEditing(true)}>Edit record</Button> : undefined}
+        actions={can("people.manage") ? (
+          <>
+            <Button onClick={() => setEditing(true)}>Edit record</Button>
+            {employee.id !== user.id && (
+              <Button variant="danger" onClick={() => { setRemoveError(""); setRemoving(true); }}>Delete employee</Button>
+            )}
+          </>
+        ) : undefined}
       />
       <section className="profile-hero panel">
         <Avatar name={fullName(employee)} color={employee.avatarColor} size={72} photoSrc={photoSrc(employee.id, employee.photoUpdatedAt)} labelled />
@@ -64,6 +75,29 @@ export function Person() {
       {allowed ? <Section employee={employee} section={tab as ProfileSection} /> : <Restricted section={tab as ProfileSection} self={employee.id === user.id} />}
       <Modal open={editing} title={`Edit ${fullName(employee)}`} className="modal-wide" onClose={() => setEditing(false)}>
         <EmployeeForm employee={employee} onDone={() => setEditing(false)} />
+      </Modal>
+      <Modal open={removing} title={`Delete ${fullName(employee)}`} onClose={() => { if (!removeBusy) setRemoving(false); }}>
+        {removeError && <Banner tone="error">{removeError}</Banner>}
+        <p>{fullName(employee)} will be removed from the directory, and their login will be removed with them. Someone with attendance, leave, or payroll history has to be set to Inactive instead.</p>
+        <div className="actions">
+          <Button variant="secondary" onClick={() => setRemoving(false)} disabled={removeBusy}>Cancel</Button>
+          <Button
+            variant="danger"
+            disabled={removeBusy}
+            onClick={async () => {
+              setRemoveBusy(true);
+              const result = await actions.deleteEmployee(employee.id);
+              setRemoveBusy(false);
+              if (!result.ok) {
+                setRemoveError(result.message);
+                return;
+              }
+              navigate("/people");
+            }}
+          >
+            {removeBusy ? "Deleting…" : "Delete employee"}
+          </Button>
+        </div>
       </Modal>
     </div>
   );

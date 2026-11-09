@@ -183,7 +183,7 @@ export function DataTable<T>({
   emptyBody,
   className,
 }: {
-  columns: { key: string; header: ReactNode; render: (row: T) => ReactNode; sort?: "ascending" | "descending" | "none" }[];
+  columns: { key: string; header: ReactNode; label?: string; render: (row: T) => ReactNode; sort?: "ascending" | "descending" | "none" }[];
   rows: T[];
   rowKey: (row: T) => string;
   caption: string;
@@ -205,7 +205,7 @@ export function DataTable<T>({
           {rows.map((row) => (
             <tr key={rowKey(row)}>
               {columns.map((column) => (
-                <td key={column.key} data-label={typeof column.header === "string" ? column.header : undefined}>{column.render(row)}</td>
+                <td key={column.key} data-label={column.label ?? (typeof column.header === "string" ? column.header : undefined)}>{column.render(row)}</td>
               ))}
             </tr>
           ))}

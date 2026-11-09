@@ -63,6 +63,7 @@ interface StoreValue {
     acknowledgeAsset: (id: string) => Promise<Result>;
     transitionAsset: (id: string, action: "return" | "repair" | "retire" | "transfer", comment: string, transferTo?: string) => Promise<Result>;
     saveEmployee: (draft: m.EmployeeDraft) => Promise<Result>;
+    deleteEmployee: (id: string) => Promise<Result>;
     updateCompensation: (id: string, gross: number) => Promise<Result>;
     updateProfile: (draft: m.ProfileDraft) => Promise<Result>;
     savePhoto: (employeeId: string, file: Blob) => Promise<Result>;
@@ -241,6 +242,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     acknowledgeAsset: (id) => run("acknowledgeAsset", { id }),
     transitionAsset: (id, action, comment, transferTo) => run("transitionAsset", { id, action, comment, transferTo }),
     saveEmployee: (draft) => run("saveEmployee", draft),
+    deleteEmployee: (id) => run("deleteEmployee", { id }),
     updateCompensation: (id, gross) => run("updateCompensation", { id, gross }),
     updateProfile: (draft) => run("updateProfile", draft),
     savePhoto: async (employeeId, file) => {
