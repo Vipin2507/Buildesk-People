@@ -1,3 +1,4 @@
+import { AVATAR_COLORS } from "./palette";
 import type { AppState, Employee, UserAccount } from "../types";
 
 export function sessionAccount(state: AppState): UserAccount | null {
@@ -37,7 +38,7 @@ export function sessionEmployee(state: AppState): Employee | null {
     dateOfBirth: "",
     showBirthday: false,
     monthlyGross: 0,
-    avatarColor: "#1d4ed8",
+    avatarColor: AVATAR_COLORS[0],
     photoUpdatedAt: null,
   };
 }

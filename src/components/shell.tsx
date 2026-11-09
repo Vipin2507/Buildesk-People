@@ -173,12 +173,20 @@ export function Shell() {
             )}
           </div>
           <button
-            className="icon-btn"
+            className="icon-btn theme-toggle"
             type="button"
             aria-label={theme.resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            onClick={() => theme.update(theme.resolved === "dark" ? "light" : "dark")}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              theme.update(theme.resolved === "dark" ? "light" : "dark", {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+            }}
           >
-            {theme.resolved === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            <span className="theme-icon" key={theme.resolved} aria-hidden="true">
+              {theme.resolved === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            </span>
           </button>
           <div ref={notesRef} style={{ position: "relative" }}>
             <button className="icon-btn" type="button" aria-label="Notifications" aria-expanded={notesOpen} onClick={() => setNotesOpen((value) => !value)}>
@@ -209,7 +217,10 @@ export function Shell() {
             {menuOpen && (
               <div className="menu" role="menu">
                 <button type="button" onClick={() => navigate("/profile")}>View profile</button>
-                <button type="button" onClick={() => theme.update("system")}>Use device theme</button>
+                <button type="button" onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  theme.update("system", { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+                }}>Use device theme</button>
                 <button type="button" onClick={() => navigate("/notifications")}>Notifications</button>
                 <button type="button" onClick={() => actions.signOut()}>Log out</button>
               </div>

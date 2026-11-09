@@ -8,6 +8,7 @@ import { createsCycle } from "../domain/org";
 import { buildPayrollLines, currentPeriod, periodForMonth, periodWarnings } from "../domain/payroll";
 import { isValidEmail, normalizeEmail } from "../lib/auth";
 import { formatDate, formatTime, fullName, rangeLabel } from "../lib/format";
+import { avatarColorAt } from "../lib/palette";
 import { sessionEmployee } from "../lib/session";
 import type {
   AppNotification,
@@ -917,7 +918,7 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
     dateOfBirth: draft.dateOfBirth,
     showBirthday: draft.showBirthday,
     monthlyGross: draft.monthlyGross !== undefined && hasPermission(state, actor, "people.compensation") ? draft.monthlyGross : existing?.monthlyGross ?? 0,
-    avatarColor: existing?.avatarColor ?? ["#1d4ed8", "#0f766e", "#7c3aed", "#b45309", "#0369a1"][state.employees.length % 5],
+    avatarColor: existing?.avatarColor ?? avatarColorAt(state.employees.length),
     photoUpdatedAt: existing?.photoUpdatedAt ?? null,
   };
   const employees = existing ? state.employees.map((item) => (item.id === saved.id ? saved : item)) : [...state.employees, saved];

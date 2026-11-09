@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Avatar, Banner, Button, DataTable, EmptyState, Field, Modal, PageHeader, Pager, StatusBadge, usePage } from "../components/ui";
 import { isValidEmail, normalizeEmail } from "../lib/auth";
 import { formatDateTime, fullName, labelFor } from "../lib/format";
+import { AVATAR_COLORS } from "../lib/palette";
 import { accessElevated } from "../store/mutations";
 import { useApp } from "../store/store";
 import type { Role, UserAccount } from "../types";
@@ -15,7 +16,7 @@ const ROLE_HELP: Record<Role, string> = {
   hr: "Full HR access, including people, leave, payroll, and settings.",
   admin: "Full access. The last active System admin cannot be removed.",
 };
-const COLORS = ["#1d4ed8", "#0f766e", "#7c3aed", "#b45309", "#0369a1"];
+const COLORS = AVATAR_COLORS;
 const FILTER_KEY = "buildesk-people-users";
 
 type Filters = { q: string; role: string; status: string; department: string };

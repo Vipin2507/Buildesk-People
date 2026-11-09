@@ -1,4 +1,5 @@
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
+import { AVATAR_COLORS } from "../lib/palette";
 import type { AppState, Employee, UserAccount } from "../types";
 
 /** Initial login accounts. Each person chooses a password on first sign-in. */
@@ -71,7 +72,7 @@ export function createSeed(): AppState {
         dateOfBirth: "",
         showBirthday: false,
         monthlyGross: 0,
-        avatarColor: "#1d4ed8",
+        avatarColor: AVATAR_COLORS[0],
         photoUpdatedAt: null,
       }),
       employee({
@@ -100,7 +101,7 @@ export function createSeed(): AppState {
         dateOfBirth: "",
         showBirthday: false,
         monthlyGross: 0,
-        avatarColor: "#0f766e",
+        avatarColor: AVATAR_COLORS[1],
         photoUpdatedAt: null,
       }),
     ],
