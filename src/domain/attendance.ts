@@ -1,4 +1,4 @@
-import { hhmm, minutesOf, todayIso } from "./dates";
+import { hhmm, minutesOf, todayIso, weekday } from "./dates";
 import { isHoliday, isNonWorking, isWeeklyOff } from "./leave";
 import type { AppState, AttendanceRecord, AttendanceStatus, Employee, WorkMode } from "../types";
 
@@ -43,8 +43,9 @@ export function todayRecord(state: AppState, employeeId: string): AttendanceReco
 
 export function officeClosedToday(state: AppState, locationId: string): "weekend" | "holiday" | null {
   const today = todayIso();
-  if (state.settings.weeklyOff.includes(new Date().getDay())) return "weekend";
-  if (isNonWorking(today, locationId, state.settings, state.holidays) && !state.settings.weeklyOff.includes(new Date().getDay())) {
+  const day = weekday(today);
+  if (state.settings.weeklyOff.includes(day)) return "weekend";
+  if (isNonWorking(today, locationId, state.settings, state.holidays) && !state.settings.weeklyOff.includes(day)) {
     return "holiday";
   }
   return null;

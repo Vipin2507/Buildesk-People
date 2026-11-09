@@ -53,7 +53,7 @@ function requestYear(request: LeaveRequest): number {
   return Number(request.startDate.slice(0, 4));
 }
 
-export function leaveSummaries(state: AppState, employeeId: string, year = new Date().getFullYear()): LeaveSummary[] {
+export function leaveSummaries(state: AppState, employeeId: string, year = Number(todayIso().slice(0, 4))): LeaveSummary[] {
   const today = todayIso();
   const requests = state.leaveRequests.filter((item) => item.employeeId === employeeId && requestYear(item) === year);
   return state.settings.leaveTypes.map((type) => {

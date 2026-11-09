@@ -10,8 +10,27 @@ export function parseISODate(iso: string): Date {
   return new Date(y || 1970, (m || 1) - 1, d || 1);
 }
 
-export function todayIso(): string {
-  return isoDate(new Date());
+/** Office clock for attendance. A UTC server still records India time. */
+const OFFICE_TZ = "Asia/Kolkata";
+
+function officeParts(d = new Date()): { year: string; month: string; day: string; hour: string; minute: string } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: OFFICE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const hour = value("hour") === "24" ? "00" : value("hour");
+  return { year: value("year"), month: value("month"), day: value("day"), hour, minute: value("minute") };
+}
+
+export function todayIso(d = new Date()): string {
+  const parts = officeParts(d);
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 export function addDays(iso: string, days: number): string {
@@ -36,9 +55,8 @@ export function weekday(iso: string): number {
 }
 
 export function wallNow(d = new Date()): string {
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${isoDate(d)}T${hh}:${mm}`;
+  const parts = officeParts(d);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 export function nowIso(): string {

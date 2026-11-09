@@ -1,7 +1,7 @@
 import { canReview, hasPermission } from "../lib/access";
 import { formatMoney, fullName, labelFor, rangeLabel } from "../lib/format";
 import { recordOn } from "./attendance";
-import { addDays, todayIso } from "./dates";
+import { addDays, todayIso, weekday } from "./dates";
 import { holidaysFor, isNonWorking, leaveSummaries } from "./leave";
 import { currentPeriod, runTotals } from "./payroll";
 import { policyApplies, publishedVersion } from "./policies";
@@ -33,7 +33,7 @@ export interface DayContext {
 
 export function dayContext(state: AppState, user: Employee): DayContext {
   const today = todayIso();
-  const weekend = state.settings.weeklyOff.includes(new Date().getDay());
+  const weekend = state.settings.weeklyOff.includes(weekday(today));
   const holidays = holidaysFor(today, user.locationId, state.holidays);
   const closed = weekend ? "weekend" : holidays.length > 0 ? "holiday" : null;
   const location = state.locations.find((item) => item.id === user.locationId);
