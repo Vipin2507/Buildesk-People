@@ -20,7 +20,7 @@ export function Settings() {
   if (tabs.length === 0) return <NoAccess body="Organization settings are available to HR, payroll, and system administrators." />;
   return (
     <div>
-      <PageHeader title="Settings" subtitle="Company setup stored on the Buildesk People server. Permission changes are saved and enforced on the next request." actions={can("settings.roles") ? <ResetDemo /> : undefined} />
+      <PageHeader title="Settings" subtitle="Company setup stored on the Buildesk People server. Permission changes are saved and enforced on the next request." />
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
       {tab === "org" && <OrgForm />}
       {tab === "schedule" && <ScheduleForm />}
@@ -31,16 +31,6 @@ export function Settings() {
       {tab === "roles" && <Roles />}
       {tab === "audit" && <Audit />}
     </div>
-  );
-}
-
-function ResetDemo() {
-  const { actions } = useApp();
-  const [open, setOpen] = useState(false);
-  return open ? (
-    <Button variant="danger" onClick={() => actions.resetDemo()}>Confirm reset</Button>
-  ) : (
-    <Button variant="secondary" onClick={() => setOpen(true)}>Reset demo data</Button>
   );
 }
 
@@ -67,6 +57,8 @@ function ScheduleForm() {
   const [workStart, setStart] = useState(state.settings.workStart);
   const [grace, setGrace] = useState(state.settings.graceMinutes);
   const [days, setDays] = useState(state.settings.weeklyOff);
+  const [locationRequired, setLocationRequired] = useState(state.settings.attendanceLocationRequired);
+  const [retention, setRetention] = useState(state.settings.locationRetentionDays == null ? "" : String(state.settings.locationRetentionDays));
   const [error, setError] = useState("");
   const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
@@ -82,9 +74,22 @@ function ScheduleForm() {
           </label>
         ))}
       </div>
+      <fieldset className="stack">
+        <legend>Punch location</legend>
+        <label className="check">
+          <input type="checkbox" checked={locationRequired} onChange={(event) => setLocationRequired(event.target.checked)} />
+          <span>Require a device location for clock in and clock out</span>
+        </label>
+        <p className="hint">When this is off, an employee can finish a punch with location not shared if the browser cannot provide a position. When it is on, the punch is saved only after a position is captured. A device position does not prove identity or a street address.</p>
+        <Field label="Location retention in days" hint="Leave this blank to keep a punch location for the same life as the attendance record. No retention period is configured until a number is saved. Saving a number removes coordinates older than that many days and leaves the punch itself.">
+          <input type="number" min={1} value={retention} placeholder="Not configured" onChange={(event) => setRetention(event.target.value)} />
+        </Field>
+      </fieldset>
       {error && <Banner tone="error">{error}</Banner>}
       <Button onClick={async () => {
-        const result = await actions.updateSettings({ workStart, graceMinutes: grace, weeklyOff: days });
+        const trimmed = retention.trim();
+        const locationRetentionDays = trimmed === "" ? null : Number(trimmed);
+        const result = await actions.updateSettings({ workStart, graceMinutes: grace, weeklyOff: days, attendanceLocationRequired: locationRequired, locationRetentionDays });
         setError(result.ok ? "" : result.message);
       }}>Save schedule</Button>
     </section>
@@ -134,7 +139,7 @@ function LeaveTypes() {
   const [error, setError] = useState("");
   return (
     <section className="panel">
-      <p className="muted">Entitlements are annual demo values. Unpaid leave has no cap. Changing a type updates the balance calculation.</p>
+      <p className="muted">Entitlements are annual. Unpaid leave has no cap. Changing a type updates the balance calculation.</p>
       {error && <Banner tone="error">{error}</Banner>}
       {state.settings.leaveTypes.map((type) => (
         <LeaveTypeRow key={type.id} typeId={type.id} onError={setError} save={actions.updateLeaveType} />
@@ -216,7 +221,7 @@ function Roles() {
   const [error, setError] = useState("");
   return (
     <section className="panel">
-      <p className="muted">System admin always keeps access to roles. These choices affect this demo immediately.</p>
+      <p className="muted">HR and System admin always keep access to roles and user management. These choices apply on the next request.</p>
       {error && <Banner tone="error">{error}</Banner>}
       <div className="table-wrap">
         <table className="data">
@@ -233,7 +238,7 @@ function Roles() {
                 <td><strong>{permission.label}</strong><div className="muted">{permission.description}</div></td>
                 {ROLES.map((role) => {
                   const checked = state.settings.rolePermissions[role]?.includes(permission.id) ?? false;
-                  const locked = role === "admin" && permission.id === "settings.roles";
+                  const locked = (role === "admin" || role === "hr") && (permission.id === "settings.roles" || permission.id === "users.manage");
                   return (
                     <td key={role}>
                       <input

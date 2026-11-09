@@ -18,7 +18,6 @@ export function sessionEmployee(state: AppState): Employee | null {
     lastName: "",
     email: account.email,
     role: account.role,
-    demoLogin: false,
     jobTitle: "",
     departmentId: account.departmentId ?? "",
     managerId: null,
@@ -39,5 +38,6 @@ export function sessionEmployee(state: AppState): Employee | null {
     showBirthday: false,
     monthlyGross: 0,
     avatarColor: "#1d4ed8",
+    photoUpdatedAt: null,
   };
 }

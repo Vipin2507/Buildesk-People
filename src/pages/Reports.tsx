@@ -38,7 +38,7 @@ export function Reports() {
       return [["Employee", "Department", "Location", "Title", "Status"], ...people.map((item) => [fullName(item), dept(item.departmentId), loc(item.locationId), item.jobTitle, labelFor(item.status)])];
     }
     if (report === "attendance") {
-      return [["Employee", "Date", "Status", "In", "Out", "Location"], ...state.attendance.filter((item) => ids.has(item.employeeId) && item.date >= from && item.date <= to).map((item) => [name(item.employeeId), item.date, labelFor(item.status), item.clockIn ?? "", item.clockOut ?? "", item.workMode ? labelFor(item.workMode) : ""])];
+      return [["Employee", "Date", "Status", "In", "Out", "Work location"], ...state.attendance.filter((item) => ids.has(item.employeeId) && item.date >= from && item.date <= to).map((item) => [name(item.employeeId), item.date, labelFor(item.status), item.clockIn ?? "", item.clockOut ?? "", item.workMode ? labelFor(item.workMode) : ""])];
     }
     if (report === "leave") {
       return [["Employee", "Type", "Start", "End", "Days", "Status"], ...state.leaveRequests.filter((item) => ids.has(item.employeeId) && item.startDate <= to && item.endDate >= from).map((item) => [name(item.employeeId), state.settings.leaveTypes.find((type) => type.id === item.typeId)?.name ?? item.typeId, item.startDate, item.endDate, String(item.days), labelFor(item.status)])];
@@ -94,7 +94,7 @@ export function Reports() {
             }, 250);
           }}>{loading ? "Preparing…" : "Generate"}</Button>
         </div>
-        {report === "payroll" && <Banner tone="info">This register includes demo compensation and is limited to payroll roles.</Banner>}
+        {report === "payroll" && <Banner tone="info">This register includes configured compensation and is limited to HR, payroll, and system administrators.</Banner>}
         {error && <Banner tone="error">{error}</Banner>}
         {!rows && !loading && <p className="muted">Choose a report and select Generate. You'll get a preview and a CSV download.</p>}
         {rows && rows.length <= 1 && <p className="muted">No rows match those filters.</p>}

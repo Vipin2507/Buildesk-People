@@ -1,6 +1,7 @@
 import { canManageTicket, canReview, defaultAssignee, hasPermission } from "../lib/access";
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { derivePunchStatus, recordOn } from "../domain/attendance";
+import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from "../domain/location";
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { createsCycle } from "../domain/org";
@@ -169,12 +170,21 @@ function isEmployee(value: Employee | Outcome): value is Employee {
   return "employeeCode" in value;
 }
 
-export function clockIn(state: AppState, mode: WorkMode): Outcome {
+function punchLocation(state: AppState, raw: unknown) {
+  const required = state.settings.attendanceLocationRequired === true;
+  const parsed = acceptPunchLocation(raw, required);
+  if (!parsed.ok) return parsed;
+  const location = parsed.location.status === "captured" ? { ...parsed.location, capturedAt: wallNow() } : parsed.location;
+  return { ok: true as const, location };
+}
+
+export function clockIn(state: AppState, mode: WorkMode, rawLocation: unknown): Outcome {
   const actor = requireUser(state, "attendance.self");
   if (!isEmployee(actor)) return actor;
   const unlinked = requireOwnRecord(state, actor);
   if (unlinked) return unlinked;
   if (actor.status === "inactive") return fail(state, "Inactive employees can't record attendance.", true);
+  if (mode !== "office" && mode !== "remote" && mode !== "client") return fail(state, "Choose Office, Remote, or Client site.");
   const today = todayIso();
   const existing = recordOn(state, actor.id, today);
   if (existing?.status === "leave") return fail(state, "You're on approved leave today. Ask your reviewer if this day should change.", true);
@@ -182,6 +192,8 @@ export function clockIn(state: AppState, mode: WorkMode): Outcome {
   if (existing?.clockIn && existing.clockOut) {
     return fail(state, "Today's attendance is already complete. Submit a correction if a time is wrong.", true);
   }
+  const parsed = punchLocation(state, rawLocation);
+  if (!parsed.ok) return fail(state, parsed.message, true);
   const stamp = wallNow();
   const status = derivePunchStatus(state, actor, today, stamp, null);
   const next = {
@@ -194,15 +206,20 @@ export function clockIn(state: AppState, mode: WorkMode): Outcome {
     status,
     source: "punch" as const,
     note: "",
+    clockInLocation: parsed.location,
+    clockOutLocation: null,
   };
   const attendance = existing
     ? state.attendance.map((item) => (item.id === existing.id ? next : item))
     : [...state.attendance, next];
   const where = mode === "office" ? "Office" : mode === "remote" ? "Remote" : "Client site";
-  return ok(pushAudit({ ...state, attendance }, actor.id, "attendance", `Clocked in (${where}).`), `Clocked in at ${formatTime(stamp)} · ${where}.`);
+  return ok(
+    pushAudit({ ...state, attendance }, actor.id, "attendance", `Clocked in (${where}). ${locationAuditPhrase(parsed.location)}`),
+    `Clocked in at ${formatTime(stamp)} · ${where}.`,
+  );
 }
 
-export function clockOut(state: AppState): Outcome {
+export function clockOut(state: AppState, rawLocation: unknown): Outcome {
   const actor = requireUser(state, "attendance.self");
   if (!isEmployee(actor)) return actor;
   const unlinked = requireOwnRecord(state, actor);
@@ -211,15 +228,55 @@ export function clockOut(state: AppState): Outcome {
   const existing = recordOn(state, actor.id, today);
   if (!existing?.clockIn) return fail(state, "Clock in before you clock out.", true);
   if (existing.clockOut) return fail(state, "You're already clocked out for today.", true);
+  const parsed = punchLocation(state, rawLocation);
+  if (!parsed.ok) return fail(state, parsed.message, true);
   const stamp = wallNow();
   if (stamp.slice(11, 16) <= (existing.clockIn.slice(11, 16) || "00:00")) {
     return fail(state, "Clock-out time must be after clock-in. Submit a correction if the clock-in time is wrong.", true);
   }
   const status = derivePunchStatus(state, actor, today, existing.clockIn, stamp);
   const attendance = state.attendance.map((item) =>
-    item.id === existing.id ? { ...item, clockOut: stamp, status, source: "punch" as const } : item,
+    item.id === existing.id ? { ...item, clockOut: stamp, status, source: "punch" as const, clockOutLocation: parsed.location } : item,
   );
-  return ok(pushAudit({ ...state, attendance }, actor.id, "attendance", "Clocked out."), `Clocked out at ${formatTime(stamp)}.`);
+  return ok(
+    pushAudit({ ...state, attendance }, actor.id, "attendance", `Clocked out. ${locationAuditPhrase(parsed.location)}`),
+    `Clocked out at ${formatTime(stamp)}.`,
+  );
+}
+
+export function rememberPlaceLabel(state: AppState, recordId: string, which: "in" | "out", placeLabel: string): Outcome {
+  const actor = user(state);
+  if (!actor) return fail(state, "Sign in to continue.", true);
+  const label = placeLabel.replace(/\s+/g, " ").trim();
+  if (label.length < 3 || label.length > 180) return fail(state, "The address could not be saved.");
+  const record = state.attendance.find((item) => item.id === recordId);
+  if (!record) return fail(state, "That attendance record could not be found.", true);
+  const allowed = record.employeeId === actor.id
+    || hasPermission(state, actor, "attendance.company")
+    || (hasPermission(state, actor, "attendance.team") && state.employees.some((item) => item.id === record.employeeId && item.managerId === actor.id));
+  if (!allowed) return fail(state, "You don't have access to this attendance location.", true);
+  const current = which === "in" ? record.clockInLocation : record.clockOutLocation;
+  if (!current || current.status !== "captured" || current.latitude == null || current.longitude == null) {
+    return fail(state, "This punch has no device position to describe.");
+  }
+  if (current.placeLabel === label) return ok(state);
+  const nextFix = { ...current, placeLabel: label };
+  const attendance = state.attendance.map((item) => item.id === record.id
+    ? { ...item, ...(which === "in" ? { clockInLocation: nextFix } : { clockOutLocation: nextFix }) }
+    : item);
+  const regularizations = state.regularizations.map((request) => {
+    if (request.employeeId !== record.employeeId || request.date !== record.date) return request;
+    if (which === "in" && request.originalClockInLocation?.status === "captured" && !request.originalClockInLocation.placeLabel) {
+      return { ...request, originalClockInLocation: { ...request.originalClockInLocation, placeLabel: label } };
+    }
+    if (which === "out" && request.originalClockOutLocation?.status === "captured" && !request.originalClockOutLocation.placeLabel) {
+      return { ...request, originalClockOutLocation: { ...request.originalClockOutLocation, placeLabel: label } };
+    }
+    return request;
+  });
+  return ok(
+    pushAudit({ ...state, attendance, regularizations }, actor.id, "attendance", `Looked up the written address for an attendance punch on ${formatDate(record.date)}.`),
+  );
 }
 
 export function submitRegularization(
@@ -257,6 +314,8 @@ export function submitRegularization(
     reviewedAt: null,
     submittedAt: nowIso(),
     history: [hist(actor.id, "Submitted", input.reason.trim())],
+    originalClockInLocation: existing?.clockInLocation ?? null,
+    originalClockOutLocation: existing?.clockOutLocation ?? null,
   };
   const notes = approverIds(state, actor, "attendance").map((userId) => ({
     userId,
@@ -306,7 +365,9 @@ export function decideRegularization(
       workMode: existing?.workMode ?? "office",
       status,
       source: "regularization" as const,
-      note: `Corrected from request ${request.id}. Earlier punches, if any, stay on this request.`,
+      note: `Corrected from request ${request.id}. Earlier punches stay on this request. Device location from the original punch is unchanged.`,
+      clockInLocation: existing?.clockInLocation ?? null,
+      clockOutLocation: existing?.clockOutLocation ?? null,
     };
     attendance = existing ? state.attendance.map((item) => (item.id === existing.id ? updated : item)) : [...state.attendance, updated];
     appliedNote = times && (times.requestedIn !== request.requestedIn || times.requestedOut !== request.requestedOut) ? "Approved with edited times." : "Approved.";
@@ -829,7 +890,7 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
   if (draft.id && !existing) return fail(state, "That employee was not found.");
   if (existing && draft.status === "inactive" && existing.id === actor.id) return fail(state, "You can't deactivate your own record.");
   const numbers = state.employees.map((item) => Number(item.employeeCode.replace(/\D/g, ""))).filter((item) => !Number.isNaN(item));
-  const role = actor.role === "admin" && draft.role ? draft.role : existing?.role ?? "employee";
+  const role = hasPermission(state, actor, "settings.roles") && draft.role ? draft.role : existing?.role ?? "employee";
   const saved: Employee = {
     id: existing?.id ?? uid("emp"),
     employeeCode: existing?.employeeCode ?? `BE-${Math.max(1000, ...numbers) + 1}`,
@@ -837,7 +898,6 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
     lastName: draft.lastName.trim(),
     email: draft.email.trim().toLowerCase(),
     role,
-    demoLogin: existing?.demoLogin ?? false,
     jobTitle: draft.jobTitle.trim(),
     departmentId: draft.departmentId,
     managerId: draft.managerId,
@@ -858,6 +918,7 @@ export function saveEmployee(state: AppState, draft: EmployeeDraft): Outcome {
     showBirthday: draft.showBirthday,
     monthlyGross: draft.monthlyGross !== undefined && hasPermission(state, actor, "people.compensation") ? draft.monthlyGross : existing?.monthlyGross ?? 0,
     avatarColor: existing?.avatarColor ?? ["#1d4ed8", "#0f766e", "#7c3aed", "#b45309", "#0369a1"][state.employees.length % 5],
+    photoUpdatedAt: existing?.photoUpdatedAt ?? null,
   };
   const employees = existing ? state.employees.map((item) => (item.id === saved.id ? saved : item)) : [...state.employees, saved];
   const verb = !existing ? "Added" : draft.status === "inactive" && existing.status !== "inactive" ? "Deactivated" : "Updated";
@@ -870,7 +931,7 @@ export function updateCompensation(state: AppState, employeeId: string, monthlyG
   if (!person(state, employeeId)) return fail(state, "That employee was not found.", true);
   if (monthlyGross < 0 || Number.isNaN(monthlyGross)) return fail(state, "Enter a monthly gross of zero or more.");
   const employees = state.employees.map((item) => (item.id === employeeId ? { ...item, monthlyGross: Math.round(monthlyGross) } : item));
-  return ok(pushAudit({ ...state, employees }, actor.id, "payroll", `Updated the demo monthly gross for ${name(state, employeeId)}.`, "payroll"), "Compensation updated. Refresh open payroll runs to pick it up.");
+  return ok(pushAudit({ ...state, employees }, actor.id, "payroll", `Updated the monthly gross for ${name(state, employeeId)}.`, "payroll"), "Compensation updated. Refresh open payroll runs to pick it up.");
 }
 
 export function updateProfile(state: AppState, draft: ProfileDraft): Outcome {
@@ -897,6 +958,19 @@ export function updateProfile(state: AppState, draft: ProfileDraft): Outcome {
       : item,
   );
   return ok(pushAudit({ ...state, employees }, actor.id, "people", "Updated own profile preferences."), "Profile saved.");
+}
+
+export function setEmployeePhoto(state: AppState, employeeId: string, photoUpdatedAt: string | null): Outcome {
+  const actor = requireUser(state);
+  if (!isEmployee(actor)) return actor;
+  const employee = person(state, employeeId);
+  if (!employee) return fail(state, "That employee was not found.", true);
+  const self = actor.id === employeeId;
+  if (!self && !hasPermission(state, actor, "people.manage")) return fail(state, "You don't have permission to change this photo.", true);
+  if ((employee.photoUpdatedAt ?? null) === photoUpdatedAt) return ok(state);
+  const employees = state.employees.map((item) => (item.id === employeeId ? { ...item, photoUpdatedAt } : item));
+  const summary = photoUpdatedAt ? `Updated the profile photo for ${fullName(employee)}.` : `Removed the profile photo for ${fullName(employee)}.`;
+  return ok(pushAudit({ ...state, employees }, actor.id, "people", summary), photoUpdatedAt ? "Profile photo saved." : "Profile photo removed.");
 }
 
 export function createPayrollRun(state: AppState, year: number, monthIndex: number): Outcome {
@@ -1054,6 +1128,17 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
     if (days.length >= 7) return fail(state, "Keep at least one working day in the week.");
     next.weeklyOff = days;
   }
+  if (patch.attendanceLocationRequired !== undefined && typeof patch.attendanceLocationRequired !== "boolean") {
+    return fail(state, "Choose whether a punch location is required.");
+  }
+  if (patch.locationRetentionDays !== undefined && patch.locationRetentionDays !== null) {
+    if (!Number.isInteger(patch.locationRetentionDays) || patch.locationRetentionDays < 1) {
+      return fail(state, "Enter a whole number of days for location retention, or leave it blank.");
+    }
+  }
+  if ((patch.attendanceLocationRequired !== undefined || patch.locationRetentionDays !== undefined) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
+    return fail(state, "You don't have permission to change these settings.", true);
+  }
   if (patch.payrollStartDay !== undefined || patch.payrollEndDay !== undefined) {
     if (!hasPermission(state, actor, "settings.payroll")) return fail(state, "Only a payroll administrator can change the payroll period.", true);
     const start = patch.payrollStartDay ?? next.payrollStartDay;
@@ -1064,7 +1149,9 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
     return fail(state, "You don't have permission to change these settings.", true);
   }
   next.orgName = (patch.orgName ?? next.orgName).trim();
-  return ok(pushAudit({ ...state, settings: next }, actor.id, "settings", "Updated organization settings."), "Settings saved.");
+  if (patch.locationRetentionDays === null) next.locationRetentionDays = null;
+  const retained = applyLocationRetention({ ...state, settings: next });
+  return ok(pushAudit(retained.state, actor.id, "settings", "Updated organization settings."), "Settings saved.");
 }
 
 export function updateLeaveType(state: AppState, input: LeaveType): Outcome {
@@ -1136,8 +1223,8 @@ export function removeCategory(state: AppState, kind: "expense" | "ticket", name
 export function setPermission(state: AppState, role: Role, permission: Permission, enabled: boolean): Outcome {
   const actor = requireUser(state, "settings.roles");
   if (!isEmployee(actor)) return actor;
-  if (role === "admin" && (permission === "settings.roles" || permission === "users.manage") && !enabled) {
-    return fail(state, "System admin keeps access to roles and user management so the workspace cannot be locked.");
+  if ((role === "admin" || role === "hr") && (permission === "settings.roles" || permission === "users.manage") && !enabled) {
+    return fail(state, "HR and System admin keep access to roles and user management so the workspace cannot be locked.");
   }
   const current = new Set(state.settings.rolePermissions[role] ?? []);
   if (enabled) current.add(permission);
@@ -1157,7 +1244,7 @@ export function saveDocument(state: AppState, input: { employeeId: string; title
   if (!isEmployee(actor)) return actor;
   if (!person(state, input.employeeId)) return fail(state, "Choose an employee.");
   if (input.title.trim().length < 3) return fail(state, "Enter a document title.");
-  if (!input.fileName.trim()) return fail(state, "Choose a file. The demo stores the file name and a text copy, not the file itself.");
+  if (!input.fileName.trim()) return fail(state, "Choose a file. The file name is stored with the record. The file itself is not uploaded.");
   const document: EmployeeDocument = {
     id: uid("doc"),
     employeeId: input.employeeId,
@@ -1353,7 +1440,7 @@ export function saveAccount(state: AppState, input: AccountDraft & { id?: string
       };
   const accounts = existing ? state.accounts.map((item) => (item.id === existing.id ? next : item)) : [next, ...state.accounts];
   const summary = existing ? `Updated the login account ${email}. Role is ${input.role}.` : `Invited ${email} as ${input.role}. No email was sent.`;
-  return ok(pushAudit(saveAccounts(state, accounts), actor.id, "users", summary), existing ? "Account updated." : "Invitation recorded. No email was sent in this demo.");
+  return ok(pushAudit(saveAccounts(state, accounts), actor.id, "users", summary), existing ? "Account updated." : "Invitation recorded. No email is sent from this workspace.");
 }
 
 function setAccountStatus(state: AppState, id: string, status: UserAccount["status"], summary: string, toast: string): Outcome {
@@ -1384,7 +1471,7 @@ export function resendInvitation(state: AppState, id: string): Outcome {
   const next = { ...account, invitedAt: nowIso(), updatedAt: nowIso() };
   return ok(
     pushAudit(saveAccounts(state, state.accounts.map((item) => (item.id === id ? next : item))), actor.id, "users", `Recorded another invitation for ${account.email}. No email was sent.`),
-    "Invitation recorded again. No email was sent in this demo.",
+    "Invitation recorded again. No email is sent from this workspace.",
   );
 }
 

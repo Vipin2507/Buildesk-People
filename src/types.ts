@@ -119,7 +119,6 @@ export interface Employee {
   lastName: string;
   email: string;
   role: Role;
-  demoLogin: boolean;
   jobTitle: string;
   departmentId: string;
   managerId: string | null;
@@ -138,9 +137,11 @@ export interface Employee {
   emergencySecondaryPhone: string;
   dateOfBirth: string;
   showBirthday: boolean;
-  /** Demo compensation used only for payroll preview. Not a salary structure. */
+  /** Configured monthly gross used for payroll. Statutory deductions are not calculated from this figure. */
   monthlyGross: number;
   avatarColor: string;
+  /** Set when a profile photo file is stored for this employee. The image itself is not kept in this record. */
+  photoUpdatedAt?: string | null;
 }
 
 export interface LeaveType {
@@ -164,6 +165,23 @@ export interface OrgSettings {
   expenseCategories: string[];
   ticketCategories: string[];
   rolePermissions: Record<Role, Permission[]>;
+  /** When true, a punch is saved only after a one-time device position is captured. */
+  attendanceLocationRequired: boolean;
+  /** Days to keep punch coordinates with the attendance record. Null means no separate retention period is configured. */
+  locationRetentionDays: number | null;
+}
+
+export type LocationCaptureStatus = "captured" | "denied" | "unavailable" | "not_requested" | "manual";
+
+/** Device position for one punch. Coordinates are present only when status is captured. */
+export interface PunchLocation {
+  status: LocationCaptureStatus;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyMeters: number | null;
+  capturedAt: string | null;
+  /** Written place name for display. The stored position remains the device reading. */
+  placeLabel?: string | null;
 }
 
 export interface AttendanceRecord {
@@ -176,6 +194,8 @@ export interface AttendanceRecord {
   status: AttendanceStatus;
   source: AttendanceSource;
   note: string;
+  clockInLocation?: PunchLocation | null;
+  clockOutLocation?: PunchLocation | null;
 }
 
 export interface HistoryEvent {
@@ -204,6 +224,8 @@ export interface RegularizationRequest {
   reviewedAt: string | null;
   submittedAt: string;
   history: HistoryEvent[];
+  originalClockInLocation?: PunchLocation | null;
+  originalClockOutLocation?: PunchLocation | null;
 }
 
 export interface LeaveRequest {

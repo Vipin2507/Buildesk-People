@@ -165,7 +165,7 @@ export function Users() {
         subtitle="Login accounts are separate from employee records. Inviting someone does not create an employee profile."
         actions={<Button onClick={openCreate}>Add User</Button>}
       />
-      <p className="muted user-note">Demo invitations stay inside this workspace. No email is sent and no password is created.</p>
+      <p className="muted user-note">Invitations stay in this workspace. No email is sent, and a password is created when the person signs in.</p>
       <div className="filters">
         <Field label="Search">
           <input aria-label="Search by name or email" value={query} placeholder="Name or email" onChange={(event) => setQuery(event.target.value)} />
@@ -267,7 +267,7 @@ export function Users() {
             : pending?.kind === "deactivate"
               ? "Deactivation keeps employee, payroll, and audit history. The person will not be able to sign in."
               : pending?.kind === "resend"
-                ? "This records another invitation. No email is sent in this demo."
+                ? "This records another invitation. No email is sent from this workspace."
                 : pending?.kind === "suspend"
                   ? `Suspend ${pending.account.email}. Sign-in stays closed until the account is reactivated.`
                   : pending

@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Check, Clock, Palmtree, X } from "lucide-react";
 import { ClockCard } from "../components/clock";
+import { LocationView } from "../components/location-view";
 import { Banner, Button, DataTable, DecisionDialog, Field, Modal, PageHeader, Pager, PersonLink, StatusBadge, Tabs, Timeline, usePage } from "../components/ui";
 import { dayFlags, recordOn, type DayFlags } from "../domain/attendance";
+import { punchLocationText } from "../domain/location";
 import { addDays, todayIso } from "../domain/dates";
 import { canReview } from "../lib/access";
 import { downloadCsv } from "../lib/download";
 import { formatDate, formatDateTime, formatDuration, formatTime, fullName, labelFor } from "../lib/format";
+import { photoSrc } from "../lib/photo";
 import { useTab } from "../lib/useTab";
 import { useApp } from "../store/store";
 import type { AttendanceRecord, Employee, RegularizationRequest } from "../types";
@@ -106,6 +109,7 @@ function Mine() {
             { key: "in", header: "Clock in", render: (row) => formatTime(row.clockIn) },
             { key: "out", header: "Clock out", render: (row) => formatTime(row.clockOut) },
             { key: "hours", header: "Hours", render: (row) => formatDuration(row.clockIn, row.clockOut) },
+            { key: "device", header: "Device location", render: (row) => punchLocationText(row) },
             { key: "exception", header: "Exception", render: (row) => exceptionMark(row) },
             { key: "correction", header: "Correction", render: (row) => correctionMark(state.regularizations, row.employeeId, row.date) },
             { key: "details", header: "Details", render: (row) => <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>View</Button> },
@@ -239,6 +243,9 @@ function RecordDialog({ record, onClose }: { record: AttendanceRecord | null; on
         {correction?.reviewComment && <><dt>Reviewer comment</dt><dd>{correction.reviewComment}</dd></>}
         {reviewer && correction?.reviewedAt && <><dt>Reviewed</dt><dd>{fullName(reviewer)} · {formatDateTime(correction.reviewedAt)}</dd></>}
       </dl>
+      <LocationView label="Clock-in device location" fix={record.clockInLocation} recordId={record.id} which="in" />
+      <LocationView label="Clock-out device location" fix={record.clockOutLocation} recordId={record.id} which="out" />
+      <p className="muted">The selected work location is separate from the device position.</p>
       <Button variant="secondary" onClick={onClose}>Close</Button>
     </Modal>
   );
@@ -382,6 +389,7 @@ function RequestDialog({
   const { state, user } = useApp();
   if (!request || !user) return null;
   const reviewer = request.reviewerId ? state.employees.find((item) => item.id === request.reviewerId) : null;
+  const attendance = state.attendance.find((item) => item.employeeId === request.employeeId && item.date === request.date);
   const allowed = request.status === "pending" && canReview(state, user, request.employeeId, "attendance");
   return (
     <Modal open title="Correction details" onClose={onClose}>
@@ -398,6 +406,9 @@ function RequestDialog({
         {reviewer && request.reviewedAt && <><dt>Reviewed by</dt><dd>{fullName(reviewer)} · {formatDateTime(request.reviewedAt)}</dd></>}
         {request.reviewComment && <><dt>Reviewer comment</dt><dd>{request.reviewComment}</dd></>}
       </dl>
+      <LocationView label="Original clock-in location" fix={request.originalClockInLocation} recordId={attendance?.id} which="in" />
+      <LocationView label="Original clock-out location" fix={request.originalClockOutLocation} recordId={attendance?.id} which="out" />
+      <p className="muted">Approving this correction updates the times and keeps the original device location on the punch and on this request.</p>
       <h3>Audit history</h3>
       <Timeline items={request.history.map((item) => ({
         id: item.id,
@@ -566,7 +577,7 @@ function DayBoard({ mode }: { mode: "team" | "company" }) {
         emptyBody={noTeam ? "People who report to you will appear here." : "Adjust the date, search, or filters."}
         columns={[
           ...(singleDay ? [] : [{ key: "date", header: "Date", render: (row: BoardRow) => formatDate(row.date) }]),
-          { key: "name", header: "Employee", render: (row: BoardRow) => <PersonLink name={fullName(row.person)} color={row.person.avatarColor} to={`/people/${row.person.id}?tab=attendance`} meta={row.person.jobTitle} /> },
+          { key: "name", header: "Employee", render: (row: BoardRow) => <PersonLink name={fullName(row.person)} color={row.person.avatarColor} photoSrc={photoSrc(row.person.id, row.person.photoUpdatedAt)} to={`/people/${row.person.id}?tab=attendance`} meta={row.person.jobTitle} /> },
           { key: "team", header: "Team", render: (row: BoardRow) => departmentName(state.departments, row.person.departmentId) },
           { key: "office", header: "Office", render: (row: BoardRow) => officeName(state.locations, row.person.locationId) },
           { key: "in", header: "Clock in", render: (row: BoardRow) => formatTime(row.record?.clockIn ?? null) },

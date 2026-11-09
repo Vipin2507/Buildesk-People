@@ -13,7 +13,7 @@ export function OrgChart() {
     <div>
       <PageHeader
         title="Organization chart"
-        subtitle="Reporting lines for the demo company. Select a person to open their profile."
+        subtitle="Reporting lines. Select a person to open their profile."
         crumbs={[{ label: "People", to: "/people" }, { label: "Organization chart" }]}
         actions={<Link className="btn btn-secondary" to="/people">Directory</Link>}
       />

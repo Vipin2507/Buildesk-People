@@ -1,3 +1,7 @@
+# Production location capture needs HTTPS on hrms.cravingcodetech.in.
+# Browsers provide a one-time position only in a secure context. Localhost is the exception.
+# The app sends Permissions-Policy: geolocation=(self). Do not allow geolocation for other origins.
+# Keep the Node process on 127.0.0.1 and let Nginx terminate TLS.
 name: Deploy
 
 on:

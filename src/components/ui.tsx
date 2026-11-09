@@ -22,9 +22,14 @@ export function StatusBadge({ value }: { value: string }) {
   return <span className={cx("badge", `tone-${toneFor(value)}`)}>{labelFor(value)}</span>;
 }
 
-export function Avatar({ name, color, size = 32 }: { name: string; color: string; size?: number }) {
+export function Avatar({ name, color, size = 32, photoSrc, labelled = false }: { name: string; color: string; size?: number; photoSrc?: string; labelled?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [photoSrc]);
+  if (photoSrc && !failed) {
+    return <img className="avatar" src={photoSrc} alt={labelled ? `${name} profile photo` : ""} width={size} height={size} onError={() => setFailed(true)} />;
+  }
   return (
-    <span className="avatar" style={{ background: color, width: size, height: size }} aria-hidden>
+    <span className="avatar" style={{ background: color, width: size, height: size }} aria-hidden={!labelled} aria-label={labelled ? `${name} profile photo` : undefined}>
       {initials(name)}
     </span>
   );
@@ -109,16 +114,23 @@ export function Field({
   label,
   hint,
   error,
+  required,
+  className,
   children,
 }: {
   label: string;
   hint?: string;
   error?: string;
+  required?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <label className="field">
-      <span>{label}</span>
+    <label className={cx("field", className)}>
+      <span>
+        {label}
+        {required && <abbr className="req" title="Required">*</abbr>}
+      </span>
       {children}
       {hint && !error && <span className="hint">{hint}</span>}
       {error && <span className="error" role="alert">{error}</span>}
@@ -244,7 +256,7 @@ export function Timeline({ items }: { items: { id: string; title: string; meta: 
   );
 }
 
-export function Modal({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ open, title, onClose, className, children }: { open: boolean; title: string; onClose: () => void; className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -278,7 +290,7 @@ export function Modal({ open, title, onClose, children }: { open: boolean; title
   if (!open) return null;
   return (
     <div className="modal-back" onMouseDown={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref} onMouseDown={(event) => event.stopPropagation()}>
+      <div className={cx("modal", className)} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref} onMouseDown={(event) => event.stopPropagation()}>
         <div className="spread">
           <h2>{title}</h2>
           <Button variant="ghost" onClick={onClose} aria-label="Close dialog">Close</Button>
@@ -360,10 +372,10 @@ export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
   );
 }
 
-export function PersonLink({ name, color, to, meta }: { name: string; color: string; to: string; meta?: string }) {
+export function PersonLink({ name, color, to, meta, photoSrc }: { name: string; color: string; to: string; meta?: string; photoSrc?: string }) {
   return (
     <Link className="person" to={to}>
-      <Avatar name={name} color={color} />
+      <Avatar name={name} color={color} photoSrc={photoSrc} />
       <span>
         {name}
         {meta && <span className="muted" style={{ display: "block", fontWeight: 500 }}>{meta}</span>}

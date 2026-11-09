@@ -28,7 +28,7 @@ export function signedOutState(accounts: UserAccount[]): AppState {
     notifications: [],
     audits: [],
     settings: {
-      orgName: "Buildesk",
+      orgName: "Craving Code",
       currency: "INR",
       workStart: "09:30",
       graceMinutes: 15,
@@ -39,6 +39,8 @@ export function signedOutState(accounts: UserAccount[]): AppState {
       expenseCategories: [],
       ticketCategories: [],
       rolePermissions: DEFAULT_ROLE_PERMISSIONS,
+      attendanceLocationRequired: false,
+      locationRetentionDays: null,
     },
   };
 }
@@ -55,6 +57,7 @@ export interface ActionResponse {
   setup?: boolean;
   accountId?: string;
   accounts?: UserAccount[];
+  placeLabel?: string | null;
 }
 
 export async function request(path: string, body?: unknown): Promise<{ status: number; payload: ActionResponse }> {

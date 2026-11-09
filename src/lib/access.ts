@@ -11,7 +11,7 @@ export const PERMISSIONS: PermissionMeta[] = [
   { id: "directory.view", group: "People", label: "View directory", description: "See the employee directory and organization chart." },
   { id: "people.manage", group: "People", label: "Manage people", description: "Add, edit, and deactivate employee records and reporting lines." },
   { id: "people.sensitive", group: "People", label: "View personal details", description: "See personal contact, address, and emergency details." },
-  { id: "people.compensation", group: "People", label: "View compensation", description: "See demo monthly gross figures used for payroll." },
+  { id: "people.compensation", group: "People", label: "View compensation", description: "See monthly gross figures used for payroll." },
   { id: "attendance.self", group: "Attendance", label: "Own attendance", description: "Clock in, clock out, and view own attendance." },
   { id: "attendance.team", group: "Attendance", label: "Team attendance", description: "View attendance for direct reports." },
   { id: "attendance.company", group: "Attendance", label: "Company attendance", description: "View attendance across the company." },
@@ -40,12 +40,44 @@ export const PERMISSIONS: PermissionMeta[] = [
   { id: "reports.payroll", group: "Reports", label: "Payroll reports", description: "Export payroll registers with compensation amounts." },
   { id: "settings.org", group: "Settings", label: "Organization settings", description: "Maintain locations, departments, schedule, holidays, and categories." },
   { id: "settings.payroll", group: "Settings", label: "Payroll settings", description: "Maintain the payroll period and payroll notes." },
-  { id: "settings.roles", group: "Settings", label: "Roles and permissions", description: "Maintain the demo permission matrix." },
+  { id: "settings.roles", group: "Settings", label: "Roles and permissions", description: "Maintain the permission matrix." },
   { id: "audit.view", group: "Settings", label: "View audit history", description: "See the audit trail allowed for the role." },
-  { id: "users.manage", group: "User management", label: "Manage login accounts", description: "Invite, edit, suspend, and deactivate login accounts. System admin only unless this permission is granted." },
+  { id: "users.manage", group: "User management", label: "Manage login accounts", description: "Invite, edit, suspend, and deactivate login accounts." },
 ];
 
 const ALL = PERMISSIONS.map((item) => item.id);
+
+/** HR permissions before this role was given the same access as System admin. */
+const PREVIOUS_HR: Permission[] = [
+  "directory.view",
+  "people.manage",
+  "people.sensitive",
+  "attendance.self",
+  "attendance.team",
+  "attendance.company",
+  "attendance.review",
+  "leave.self",
+  "leave.team",
+  "leave.approve",
+  "leave.manage",
+  "payroll.self",
+  "expenses.self",
+  "expenses.review",
+  "insurance.self",
+  "insurance.manage",
+  "tickets.self",
+  "tickets.manage",
+  "assets.self",
+  "assets.manage",
+  "policies.view",
+  "policies.manage",
+  "documents.manage",
+  "reports.self",
+  "reports.team",
+  "reports.org",
+  "settings.org",
+  "audit.view",
+];
 
 function setOf(ids: Permission[]): Permission[] {
   return ids;
@@ -82,36 +114,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "reports.self",
     "reports.team",
   ]),
-  hr: setOf([
-    "directory.view",
-    "people.manage",
-    "people.sensitive",
-    "attendance.self",
-    "attendance.team",
-    "attendance.company",
-    "attendance.review",
-    "leave.self",
-    "leave.team",
-    "leave.approve",
-    "leave.manage",
-    "payroll.self",
-    "expenses.self",
-    "expenses.review",
-    "insurance.self",
-    "insurance.manage",
-    "tickets.self",
-    "tickets.manage",
-    "assets.self",
-    "assets.manage",
-    "policies.view",
-    "policies.manage",
-    "documents.manage",
-    "reports.self",
-    "reports.team",
-    "reports.org",
-    "settings.org",
-    "audit.view",
-  ]),
+  hr: setOf([...ALL]),
   payroll: setOf([
     "directory.view",
     "people.compensation",
@@ -134,8 +137,25 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "settings.payroll",
     "audit.view",
   ]),
-  admin: ALL,
+  admin: [...ALL],
 };
+
+/** Give an existing HR role the full permission set when it still has the previous list. */
+export function grantHrAdminAccess(state: AppState): { state: AppState; changed: boolean } {
+  const current = state.settings.rolePermissions.hr ?? [];
+  const previous = current.length === PREVIOUS_HR.length && PREVIOUS_HR.every((id) => current.includes(id));
+  if (!previous) return { state, changed: false };
+  return {
+    changed: true,
+    state: {
+      ...state,
+      settings: {
+        ...state.settings,
+        rolePermissions: { ...state.settings.rolePermissions, hr: [...DEFAULT_ROLE_PERMISSIONS.hr] },
+      },
+    },
+  };
+}
 
 export const ROLES: Role[] = ["employee", "manager", "hr", "payroll", "admin"];
 
@@ -176,6 +196,12 @@ export function canSeeBirthday(viewer: Employee | null, person: Employee, sensit
 }
 
 export type ProfileSection = "personal" | "salary" | "team" | "emergency" | "documents" | "attendance" | "leaves" | "regularization" | "assets" | "policies";
+
+export function canEditPhoto(state: AppState, actor: Employee | null, employee: Employee): boolean {
+  if (!actor) return false;
+  if (actor.id === employee.id) return true;
+  return hasPermission(state, actor, "people.manage");
+}
 
 export function canOpenProfile(state: AppState, viewer: Employee, employee: Employee): boolean {
   if (viewer.id === employee.id) return true;
@@ -225,12 +251,7 @@ export function documentSensitivityAllowed(sensitivity: DocumentSensitivity, sta
 }
 
 export function defaultAssignee(state: AppState, category: string): string | null {
-  const emailByCategory: Record<string, string> = {
-    HR: "meera.iyer@buildesk.com",
-    Payroll: "rohan.desai@buildesk.com",
-    IT: "priya.nair@buildesk.com",
-    Facilities: "meera.iyer@buildesk.com",
-  };
-  const email = emailByCategory[category] ?? "meera.iyer@buildesk.com";
-  return state.employees.find((item) => item.email === email)?.id ?? null;
+  const role = category === "Payroll" ? "payroll" : category === "IT" ? "hr" : category === "HR" || category === "Facilities" ? "hr" : null;
+  if (!role) return null;
+  return state.employees.find((item) => item.role === role && item.status === "active")?.id ?? null;
 }

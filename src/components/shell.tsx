@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { navCounts } from "../domain/feed";
 import { labelFor } from "../lib/format";
+import { photoSrc } from "../lib/photo";
 import { useThemeChoice } from "../lib/theme";
 import { useApp } from "../store/store";
 import { Avatar, Toasts, cx } from "./ui";
@@ -105,7 +106,6 @@ export function Shell() {
             <span>Human resources</span>
           </div>
         </div>
-        <div className="demo-chip hide-collapsed" style={{ padding: "0 18px 8px" }}>Demo workspace</div>
         <nav className="side-nav">
           {NAV.filter((item) => (item.to !== "/settings" || showSettings) && (item.to !== "/policies" || can("policies.view") || can("policies.manage")) && (item.to !== "/users" || can("users.manage"))).map((item) => {
             const Icon = item.icon;
@@ -200,7 +200,7 @@ export function Shell() {
           </div>
           <div ref={menuRef} style={{ position: "relative" }}>
             <button className="profile-btn" type="button" aria-label={`${full}, ${labelFor(user.role)}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}>
-              <Avatar name={full} color={user.avatarColor} size={32} />
+              <Avatar name={full} color={user.avatarColor} size={32} photoSrc={photoSrc(user.id, user.photoUpdatedAt)} />
               <span className="profile-name">
                 <strong style={{ display: "block", lineHeight: 1.2 }}>{full}</strong>
                 <span className="muted" style={{ fontSize: 12 }}>{labelFor(user.role)}</span>
@@ -218,7 +218,7 @@ export function Shell() {
         </header>
         <main className="content" id="content">
           <Outlet />
-          <footer className="footer">Buildesk People · Demo workspace with fictional employees. Do not enter real personal data.</footer>
+          <footer className="footer">Buildesk People · {state.settings.orgName}</footer>
         </main>
       </div>
       <Toasts toasts={toasts} onDismiss={dismissToast} />

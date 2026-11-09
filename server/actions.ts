@@ -13,8 +13,8 @@ function rejected(state: AppState, message: string): Outcome {
 type Handler = (state: AppState, body: Record<string, any>) => Outcome;
 
 export const actions: Record<string, Handler> = {
-  clockIn: (state, body) => m.clockIn(state, body.mode),
-  clockOut: (state) => m.clockOut(state),
+  clockIn: (state, body) => m.clockIn(state, body.mode, body.location),
+  clockOut: (state, body) => m.clockOut(state, body.location),
   submitRegularization: (state, body) => m.submitRegularization(state, body),
   decideRegularization: (state, body) => m.decideRegularization(state, body.id, body.decision, body.comment, body.times),
   submitLeave: (state, body) => m.submitLeave(state, body),

@@ -111,7 +111,7 @@ export function PolicyDetail() {
           <p>{showing.summary}</p>
           <p className="policy-body">{showing.content}</p>
           <div className="actions">
-            <Button variant="secondary" onClick={() => downloadText(showing.fileName || "policy.txt", `${policy.title}\nVersion ${showing.version}\n\n${showing.content}\n\nDemo file. The original upload is stored by name only.`)}>Download</Button>
+            <Button variant="secondary" onClick={() => downloadText(showing.fileName || "policy.txt", `${policy.title}\nVersion ${showing.version}\n\n${showing.content}\n\nThe original upload is stored by name only.`)}>Download</Button>
             {manage && <Button variant="secondary" onClick={() => setPreview(true)}>Preview</Button>}
             {manage && <Button onClick={() => setEditing(true)}>{policy.status === "published" ? "New version" : "Edit draft"}</Button>}
             {manage && (policy.status === "draft" || pending) && <Button onClick={() => setPublish(true)}>Publish</Button>}
@@ -207,7 +207,7 @@ function PolicyEditor({ policy, onDone }: { policy?: Policy; onDone: () => void 
       </div>
       <Field label="Summary"><textarea value={summary} onChange={(event) => setSummary(event.target.value)} /></Field>
       <Field label="Policy text"><textarea value={content} onChange={(event) => setContent(event.target.value)} /></Field>
-      <Field label="Document" hint="The demo keeps the file name and the text above. It does not store a PDF binary.">
+      <Field label="Document" hint="The file name and the text above are stored. A PDF binary is not stored.">
         <input type="file" onChange={(event) => setFile(event.target.files?.[0]?.name ?? "")} />
       </Field>
       <div className="actions">

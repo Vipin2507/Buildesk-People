@@ -82,13 +82,13 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
     return (
       <main className="signin-main">
         <h1>This page ran into a problem</h1>
-        <p>You can reload, or reset the demo data and start again.</p>
+        <p>Reload the page and try that step again.</p>
         <button
           className="btn btn-primary"
           type="button"
           onClick={() => location.reload()}
         >
-          Reset demo and reload
+          Reload
         </button>
       </main>
     );

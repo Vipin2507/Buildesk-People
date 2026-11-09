@@ -17,7 +17,7 @@ export function Payroll() {
     { id: "payslips", label: "Payslips" },
   ];
   const [tab, setTab] = useTab(tabs.map((item) => item.id), can("payroll.manage") ? "runs" : "payslips");
-  if (runId && !can("payroll.manage")) return <NoAccess body="Payroll runs are limited to payroll administrators and system administrators. You can still open your own payslips." />;
+  if (runId && !can("payroll.manage")) return <NoAccess body="Payroll runs are limited to HR, payroll, and system administrators. You can still open your own payslips." />;
   return (
     <div>
       <PageHeader
@@ -205,7 +205,7 @@ function PayslipView({ slip }: { slip: Payslip; onClose: () => void }) {
   const person = state.employees.find((item) => item.id === slip.employeeId);
   const text = [
     "Buildesk People",
-    "Payslip (demo)",
+    "Payslip",
     person ? fullName(person) : "",
     rangeLabel(slip.periodStart, slip.periodEnd),
     `Monthly gross: ${formatMoney(slip.monthlyGross, state.settings.currency)}`,

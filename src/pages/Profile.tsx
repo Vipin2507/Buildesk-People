@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Banner, Button, PageHeader, PasswordInput } from "../components/ui";
+import { PhotoActions } from "../components/photo-editor";
+import { Avatar, Banner, Button, PageHeader, PasswordInput } from "../components/ui";
+import { photoSrc } from "../lib/photo";
+import { fullName } from "../lib/format";
 import { useApp } from "../store/store";
 
 export function Profile() {
@@ -37,8 +40,20 @@ export function Profile() {
         setError(result.ok ? "" : result.message);
       }}>
         {error && <Banner tone="error">{error}</Banner>}
-        {saved && <Banner tone="success">Profile saved in this demo workspace.</Banner>}
-        <p className="muted">{user.jobTitle} · {user.email}. Job details are changed by HR.</p>
+        {saved && <Banner tone="success">Profile saved.</Banner>}
+        <div className="profile-hero">
+          <Avatar name={fullName(user)} color={user.avatarColor} size={72} photoSrc={photoSrc(user.id, user.photoUpdatedAt)} labelled />
+          <div>
+            <p className="muted">{user.jobTitle} · {user.email}. Job details are changed by HR.</p>
+            <PhotoActions
+              name={fullName(user)}
+              hasPhoto={Boolean(user.photoUpdatedAt)}
+              canEdit
+              savePhoto={(file) => actions.savePhoto(user.id, file)}
+              removePhoto={() => actions.removePhoto(user.id)}
+            />
+          </div>
+        </div>
         <label className="field">Phone<input value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
         <label className="field">Personal email<input value={personalEmail} onChange={(event) => setEmail(event.target.value)} /></label>
         <label className="field">Address<input value={address} onChange={(event) => setAddress(event.target.value)} /></label>

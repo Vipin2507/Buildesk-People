@@ -2,8 +2,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { grantHrAdminAccess } from "../src/lib/access.ts";
+import { removeDemoContent } from "../src/data/cleanup.ts";
 import { createSeed } from "../src/data/seed.ts";
 import { normalizeAttendance } from "../src/domain/attendance.ts";
+import { applyLocationRetention, withAttendancePolicy } from "../src/domain/location.ts";
 import { DATA_VERSION, type AppState } from "../src/types.ts";
 
 const file = join(process.cwd(), "data", "buildesk.sqlite");
@@ -38,9 +41,13 @@ export function readWorkspace(): AppState {
     db.exec("DELETE FROM sessions");
     return state;
   }
-  const state = JSON.parse(row.document) as AppState;
-  state.currentUserId = null;
-  return state;
+  const parsed = withAttendancePolicy(normalizeAttendance(JSON.parse(row.document) as AppState));
+  parsed.currentUserId = null;
+  const cleaned = removeDemoContent(parsed);
+  const granted = grantHrAdminAccess(cleaned.state);
+  const retained = applyLocationRetention(granted.state);
+  if (cleaned.changed || granted.changed || retained.changed) writeWorkspace(retained.state);
+  return retained.state;
 }
 
 export function writeWorkspace(state: AppState): void {
@@ -49,13 +56,6 @@ export function writeWorkspace(state: AppState): void {
     INSERT INTO workspace (id, version, document) VALUES (1, ?, ?)
     ON CONFLICT(id) DO UPDATE SET version = excluded.version, document = excluded.document
   `).run(DATA_VERSION, JSON.stringify(stored));
-}
-
-export function resetWorkspace(): AppState {
-  const state = freshState();
-  writeWorkspace(state);
-  db.exec("DELETE FROM sessions");
-  return state;
 }
 
 function hashToken(token: string): string {

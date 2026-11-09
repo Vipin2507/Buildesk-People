@@ -65,7 +65,7 @@ function MyClaims() {
           <Field label={`Amount (${state.settings.currency})`}><input type="number" min={1} value={amount} onChange={(event) => setAmount(event.target.value)} /></Field>
           <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
           <Field label="Description"><textarea value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
-          <Field label="Receipt" hint="The demo stores the file name only, not the file contents.">
+          <Field label="Receipt" hint="The file name is stored. The file itself is not uploaded.">
             <input type="file" accept="image/*,.pdf" onChange={(event) => setReceipt(event.target.files?.[0]?.name ?? "")} />
           </Field>
           <Button type="submit">Submit claim</Button>
@@ -180,7 +180,7 @@ function Insurance() {
   return (
     <section className="panel narrow">
       <h2>Insurance</h2>
-      <Banner tone="info">Insurance records are visible only to the employee and authorized HR. This demo does not store policy documents or medical files.</Banner>
+      <Banner tone="info">Insurance records are visible only to the employee and authorized HR. Policy documents and medical files are not stored.</Banner>
       {can("insurance.manage") && (
         <Field label="Employee">
           <select value={employeeId} onChange={(event) => { setEmployee(event.target.value); setDraft(null); }}>

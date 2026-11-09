@@ -213,7 +213,7 @@ function AssetForm({ asset, onDone }: { asset?: Asset; onDone: (id?: string) => 
   return (
     <section className="panel">
       <h2>{asset ? `Edit ${asset.tag}` : "Add asset"}</h2>
-      <p className="muted">Choosing an employee marks the asset assigned. Choosing not assigned clears the employee. The demo stores remarks and a file name only where a document is attached.</p>
+      <p className="muted">Choosing an employee marks the asset assigned. Choosing not assigned clears the employee. Remarks are stored with the asset. An attached document is kept by file name.</p>
       <form noValidate onSubmit={async (event) => {
         event.preventDefault();
         if (assignmentChanged) setConfirm(true);

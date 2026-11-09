@@ -2,13 +2,18 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { findAccountByEmail, isValidEmail } from "../src/lib/auth.ts";
-import { hasPermission } from "../src/lib/access.ts";
+import { canEditPhoto, canOpenProfile, hasPermission } from "../src/lib/access.ts";
 import { sessionEmployee } from "../src/lib/session.ts";
-import { acceptInvitation, setAccountPassword } from "../src/store/mutations.ts";
+import { acceptInvitation, rememberPlaceLabel, setAccountPassword, setEmployeePhoto } from "../src/store/mutations.ts";
+import { loadEnv } from "./env.ts";
+import { describePlace } from "./place.ts";
+
+loadEnv();
 import type { AppState } from "../src/types.ts";
 import { actions } from "./actions.ts";
-import { createSession, deleteSession, readSession, readWorkspace, resetWorkspace, writeWorkspace } from "./db.ts";
+import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
+import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
 import { presentWorkspace } from "./present.ts";
 
 const PORT = Number(process.env.PORT ?? process.env.BUILDESK_API_PORT ?? 8787);
@@ -16,8 +21,11 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 const COOKIE = "buildesk_session";
 const DIST = resolve(process.cwd(), "dist");
 
+/** Geolocation is allowed only for this site's own origin. Unrelated origins stay blocked. */
+const SECURITY_HEADERS = { "permissions-policy": "geolocation=(self)" };
+
 function send(response: ServerResponse, status: number, payload: unknown, extraHeaders: Record<string, string> = {}): void {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extraHeaders });
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...SECURITY_HEADERS, ...extraHeaders });
   response.end(JSON.stringify(payload));
 }
 
@@ -54,7 +62,7 @@ function serveApp(request: IncomingMessage, response: ServerResponse, pathname: 
   const relative = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, "");
   let file = resolve(DIST, relative);
   if (file !== DIST && !file.startsWith(DIST + sep)) {
-    response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+    response.writeHead(403, { "content-type": "text/plain; charset=utf-8", ...SECURITY_HEADERS });
     response.end("Forbidden");
     return true;
   }
@@ -67,6 +75,7 @@ function serveApp(request: IncomingMessage, response: ServerResponse, pathname: 
   response.writeHead(200, {
     "content-type": contentType(file),
     "cache-control": html ? "no-cache" : "public, max-age=31536000, immutable",
+    ...SECURITY_HEADERS,
   });
   if (request.method === "HEAD") {
     response.end();
@@ -84,6 +93,29 @@ function tokenFrom(request: IncomingMessage): string | null {
     if (name === COOKIE) return decodeURIComponent(rest.join("="));
   }
   return null;
+}
+
+function readBytes(request: IncomingMessage, max: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > max) {
+        request.destroy();
+        reject(new Error("That image is larger than 2 MB."));
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks)));
+    request.on("error", reject);
+  });
+}
+
+function employeeIdFromPhotoPath(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/people\/(emp_[a-z0-9_]+)\/photo$/i);
+  return match?.[1] ?? null;
 }
 
 function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -263,22 +295,133 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/workspace/reset") {
-      const { source, accountId } = viewerState(readSession(tokenFrom(request)));
-      const viewer = accountId ? sessionEmployee({ ...source, currentUserId: accountId }) : null;
-      if (!viewer || !hasPermission(source, viewer, "settings.roles")) {
-        send(response, 403, { ok: false, message: "Only a System admin can reset the workspace." });
+    const photoEmployeeId = employeeIdFromPhotoPath(url.pathname);
+    if (photoEmployeeId && (request.method === "GET" || request.method === "POST" || request.method === "DELETE")) {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
       }
-      const fresh = resetWorkspace();
-      const kept = accountId && fresh.accounts.some((item) => item.id === accountId && item.status === "active") ? accountId : null;
-      const token = kept ? createSession(kept) : null;
-      send(
-        response,
-        200,
-        { ok: true, authenticated: Boolean(kept), state: kept ? presentWorkspace(fresh, kept) : null, toast: "Workspace reset from the server seed." },
-        { "set-cookie": cookieHeader(token, request) },
-      );
+      const signed = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(signed);
+      const employee = signed.employees.find((item) => item.id === photoEmployeeId);
+      if (!viewer || !employee || !canOpenProfile(signed, viewer, employee)) {
+        send(response, 403, { ok: false, message: "You don't have access to this profile." });
+        return;
+      }
+      if (request.method === "GET") {
+        if (!employee.photoUpdatedAt) {
+          send(response, 404, { ok: false, message: "This employee has no profile photo." });
+          return;
+        }
+        const bytes = readPhoto(employee.id);
+        if (!bytes) {
+          send(response, 404, { ok: false, message: "This employee has no profile photo." });
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "image/jpeg",
+          "cache-control": "private, no-store",
+          "x-content-type-options": "nosniff",
+          ...SECURITY_HEADERS,
+        });
+        response.end(bytes);
+        return;
+      }
+      if (!canEditPhoto(signed, viewer, employee)) {
+        send(response, 403, { ok: false, message: "You don't have permission to change this photo." });
+        return;
+      }
+      if (request.method === "DELETE") {
+        deletePhoto(employee.id);
+        const outcome = setEmployeePhoto(signed, employee.id, null);
+        if (!outcome.result.ok) {
+          send(response, 400, { ok: false, message: outcome.result.message });
+          return;
+        }
+        const saved = { ...outcome.state, currentUserId: null };
+        writeWorkspace(saved);
+        send(response, 200, { ok: true, state: presentWorkspace(saved, accountId), toast: outcome.toast });
+        return;
+      }
+      const type = request.headers["content-type"] ?? "";
+      if (!type.startsWith("image/jpeg")) {
+        send(response, 400, { ok: false, message: "Use a JPEG, PNG, or WebP image. The preview is saved as a JPEG." });
+        return;
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await readBytes(request, 2 * 1024 * 1024);
+      } catch (error) {
+        send(response, 400, { ok: false, message: error instanceof Error ? error.message : "That image could not be read." });
+        return;
+      }
+      const problem = writePhoto(employee.id, bytes);
+      if (problem) {
+        send(response, 400, { ok: false, message: problem });
+        return;
+      }
+      const outcome = setEmployeePhoto(signed, employee.id, new Date().toISOString());
+      if (!outcome.result.ok) {
+        deletePhoto(employee.id);
+        send(response, 400, { ok: false, message: outcome.result.message });
+        return;
+      }
+      const saved = { ...outcome.state, currentUserId: null };
+      writeWorkspace(saved);
+      send(response, 200, { ok: true, state: presentWorkspace(saved, accountId), toast: outcome.toast });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/attendance/place") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const body = await readBody(request);
+      const recordId = typeof body.recordId === "string" ? body.recordId : "";
+      const which = body.which === "out" ? "out" : body.which === "in" ? "in" : "";
+      if (!recordId || !which) {
+        send(response, 400, { ok: false, message: "The attendance punch could not be found." });
+        return;
+      }
+      const signed = { ...source, currentUserId: accountId };
+      const record = signed.attendance.find((item) => item.id === recordId);
+      const viewer = sessionEmployee(signed);
+      const allowed = Boolean(record && viewer && (
+        record.employeeId === viewer.id
+        || hasPermission(signed, viewer, "attendance.company")
+        || (hasPermission(signed, viewer, "attendance.team") && signed.employees.some((item) => item.id === record.employeeId && item.managerId === viewer.id))
+      ));
+      if (!record || !allowed) {
+        send(response, 403, { ok: false, message: "You don't have access to this attendance location." });
+        return;
+      }
+      const fix = which === "in" ? record.clockInLocation : record.clockOutLocation;
+      if (fix?.placeLabel?.includes(" · ")) {
+        send(response, 200, { ok: true, placeLabel: fix.placeLabel, state: presentWorkspace(source, accountId) });
+        return;
+      }
+      if (!fix || fix.status !== "captured" || fix.latitude == null || fix.longitude == null) {
+        send(response, 200, { ok: false, placeLabel: null, message: "This punch has no device position to describe." });
+        return;
+      }
+      const placeLabel = await describePlace(fix.latitude, fix.longitude);
+      if (!placeLabel) {
+        send(response, 200, { ok: false, placeLabel: null, message: "The address could not be looked up." });
+        return;
+      }
+      const outcome = rememberPlaceLabel(signed, recordId, which, placeLabel);
+      if (!outcome.result.ok) {
+        send(response, 200, { ok: false, placeLabel: null, message: outcome.result.message });
+        return;
+      }
+      const saved = { ...outcome.state, currentUserId: null };
+      writeWorkspace(saved);
+      send(response, 200, { ok: true, placeLabel, state: presentWorkspace(saved, accountId) });
       return;
     }
 

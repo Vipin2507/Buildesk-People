@@ -22,6 +22,7 @@ import {
   type QueueItem,
 } from "../domain/overview";
 import { formatDate, formatDateLong, formatDateTime, formatMoney, fullName, greeting, labelFor, relativeDay } from "../lib/format";
+import { photoSrc } from "../lib/photo";
 import { useApp } from "../store/store";
 
 export function Overview() {
@@ -218,7 +219,7 @@ function Workforce({ focus, today, closed }: { focus: string; today: string; clo
     <Panel title="Attendance" action={<Link to={href}>Open attendance</Link>}>
       <p className="muted">
         {closed ? `Counts use ${formatDate(focus)}, the last working day.` : `Counts use ${formatDate(focus)}.`}
-        {" "}Work location is the office, remote, or client choice recorded for the day. GPS is not collected.
+        {" "}Work location is the office, remote, or client choice recorded for the day. A device position shared on a punch is separate and is not included in these counts.
       </p>
       <div className="filters">
         {can("attendance.company") && can("attendance.team") && (
@@ -272,7 +273,7 @@ function Approvals() {
         const name = person ? fullName(person) : "Employee";
         return (
           <div key={item.id} className="notice queue-row">
-            <PersonLink name={name} color={person?.avatarColor ?? "#1d4ed8"} to={person ? `/people/${person.id}` : "/people"} meta={item.summary} />
+            <PersonLink name={name} color={person?.avatarColor ?? "#1d4ed8"} photoSrc={person ? photoSrc(person.id, person.photoUpdatedAt) : undefined} to={person ? `/people/${person.id}` : "/people"} meta={item.summary} />
             <span>
               <StatusBadge value="pending" />
               <span className="muted" style={{ display: "block" }}>{formatDate(item.submittedAt.slice(0, 10))}</span>

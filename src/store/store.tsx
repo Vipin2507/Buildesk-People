@@ -6,7 +6,7 @@ import type { AppState, Employee, Permission, Result } from "../types";
 import * as m from "./mutations";
 import type { ToastTone } from "./mutations";
 
-export const STORAGE_KEY = "buildesk-people-demo-v1";
+export const STORAGE_KEY = "buildesk-people-v1";
 
 export interface Toast {
   id: string;
@@ -26,7 +26,6 @@ interface StoreValue {
     createPassword: (email: string, password: string, confirm: string) => Promise<Result>;
     changePassword: (currentPassword: string, password: string, confirm: string) => Promise<Result>;
     signOut: () => Promise<void>;
-    resetDemo: () => Promise<void>;
     acceptInvitation: (email: string) => Promise<Result>;
     saveAccount: (input: Parameters<typeof m.saveAccount>[1]) => Promise<Result>;
     resendInvitation: (id: string) => Promise<Result>;
@@ -34,8 +33,9 @@ interface StoreValue {
     reactivateAccount: (id: string) => Promise<Result>;
     deactivateAccount: (id: string) => Promise<Result>;
     deleteAccount: (id: string) => Promise<Result>;
-    clockIn: (mode: Parameters<typeof m.clockIn>[1]) => Promise<Result>;
-    clockOut: () => Promise<Result>;
+    clockIn: (mode: Parameters<typeof m.clockIn>[1], location: Parameters<typeof m.clockIn>[2]) => Promise<Result>;
+    clockOut: (location: Parameters<typeof m.clockOut>[1]) => Promise<Result>;
+    lookupPlace: (recordId: string, which: "in" | "out") => Promise<string | null>;
     submitRegularization: (input: Parameters<typeof m.submitRegularization>[1]) => Promise<Result>;
     decideRegularization: (id: string, decision: "approved" | "rejected", comment: string, times?: { requestedIn: string; requestedOut: string }) => Promise<Result>;
     submitLeave: (input: Parameters<typeof m.submitLeave>[1]) => Promise<Result>;
@@ -65,6 +65,8 @@ interface StoreValue {
     saveEmployee: (draft: m.EmployeeDraft) => Promise<Result>;
     updateCompensation: (id: string, gross: number) => Promise<Result>;
     updateProfile: (draft: m.ProfileDraft) => Promise<Result>;
+    savePhoto: (employeeId: string, file: Blob) => Promise<Result>;
+    removePhoto: (employeeId: string) => Promise<Result>;
     createPayrollRun: (year: number, monthIndex: number) => Promise<Result>;
     refreshPayroll: (runId: string) => Promise<Result>;
     updatePayrollLine: (runId: string, employeeId: string, adjustment: number, reason: string) => Promise<Result>;
@@ -111,6 +113,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    localStorage.removeItem("buildesk-people-demo-v1");
     localStorage.removeItem(STORAGE_KEY);
     request("/api/bootstrap").then(({ status, payload }) => {
       if (cancelled) return;
@@ -187,15 +190,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const { payload } = await request("/api/bootstrap");
       if (!payload.authenticated) adopt(signedOutState(payload.accounts ?? []));
     },
-    resetDemo: async () => {
-      const { payload } = await request("/api/workspace/reset", {});
-      if (payload.toast) pushToast(payload.toast, "info");
-      if (payload.state) adopt(payload.state);
-      else {
-        const next = await request("/api/bootstrap");
-        adopt(signedOutState(next.payload.accounts ?? []));
-      }
-    },
     acceptInvitation: async (email) => {
       const { payload } = await request("/api/auth/accept", { email });
       if (payload.state) {
@@ -213,8 +207,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reactivateAccount: (id) => run("reactivateAccount", { id }),
     deactivateAccount: (id) => run("deactivateAccount", { id }),
     deleteAccount: (id) => run("deleteAccount", { id }),
-    clockIn: (mode) => run("clockIn", { mode }),
-    clockOut: () => run("clockOut"),
+    clockIn: (mode, location) => run("clockIn", { mode, location }),
+    clockOut: (location) => run("clockOut", { location }),
+    lookupPlace: async (recordId, which) => {
+      const { payload } = await request("/api/attendance/place", { recordId, which });
+      if (payload.state) adopt(payload.state);
+      return typeof payload.placeLabel === "string" && payload.placeLabel.trim() ? payload.placeLabel : null;
+    },
     submitRegularization: (input) => run("submitRegularization", input),
     decideRegularization: (id, decision, comment, times) => run("decideRegularization", { id, decision, comment, times }),
     submitLeave: (input) => run("submitLeave", input),
@@ -244,6 +243,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveEmployee: (draft) => run("saveEmployee", draft),
     updateCompensation: (id, gross) => run("updateCompensation", { id, gross }),
     updateProfile: (draft) => run("updateProfile", draft),
+    savePhoto: async (employeeId, file) => {
+      const response = await fetch(`/api/people/${encodeURIComponent(employeeId)}/photo`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "image/jpeg" },
+        body: file,
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string; state?: AppState | null; toast?: string };
+      if (payload.state) adopt(payload.state);
+      if (response.ok && payload.ok) {
+        pushToast(payload.toast ?? "Profile photo saved.", "success");
+        return { ok: true };
+      }
+      const message = payload.message ?? "The photo could not be saved. Try again.";
+      pushToast(message, "error");
+      return { ok: false, message };
+    },
+    removePhoto: async (employeeId) => {
+      const response = await fetch(`/api/people/${encodeURIComponent(employeeId)}/photo`, { method: "DELETE", credentials: "include" });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string; state?: AppState | null; toast?: string };
+      if (payload.state) adopt(payload.state);
+      if (response.ok && payload.ok) {
+        pushToast(payload.toast ?? "Profile photo removed.", "success");
+        return { ok: true };
+      }
+      const message = payload.message ?? "The photo could not be removed.";
+      pushToast(message, "error");
+      return { ok: false, message };
+    },
     createPayrollRun: (year, monthIndex) => run("createPayrollRun", { year, monthIndex }),
     refreshPayroll: async (runId) => {
       setBusy("payroll");

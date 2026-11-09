@@ -93,7 +93,7 @@ function MyLeave() {
             </select>
           </Field>
           <Field label="Reason"><textarea value={reason} onChange={(event) => setReason(event.target.value)} /></Field>
-          <Field label="Attachment (optional)" hint="The demo stores the file name only.">
+          <Field label="Attachment (optional)" hint="The file name is stored. The file itself is not uploaded.">
             <input type="file" onChange={(event) => setAttachment(event.target.files?.[0]?.name ?? "")} />
           </Field>
           <Button type="submit">Submit request</Button>
@@ -260,7 +260,7 @@ function CompOff() {
     <div className="grid-2">
       <section className="panel">
         <h2>Comp-off records</h2>
-        <p className="muted">Available days can be requested as comp-off leave. Expired days are not usable. The demo default expiry is 90 days and can be changed.</p>
+        <p className="muted">Available days can be requested as comp-off leave. Expired days are not usable. A new grant expires after 90 days unless a different date is chosen.</p>
         {grants.length === 0 && <EmptyState title="No comp-off" body="When you work on a weekly off, HR can grant a day here." />}
         {grants.map((item) => {
           const expired = item.status === "available" && item.expiresOn < todayIso();

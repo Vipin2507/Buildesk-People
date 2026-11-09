@@ -56,7 +56,7 @@ export function buildPayrollLines(state: AppState, start: string, end: string, r
     warnings.push("Unpaid leave is flagged and does not change gross pay. No unpaid-leave deduction rule is configured.");
   }
   if (lines.some((line) => line.monthlyGross <= 0)) {
-    warnings.push("One or more employees have no demo monthly gross. Their payable amount stays at reimbursements and adjustments only.");
+    warnings.push("One or more employees have no monthly gross. Their payable amount stays at reimbursements and adjustments only.");
   }
   return { lines, warnings };
 }
@@ -114,7 +114,7 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
   if (incompleteDays > 0) exceptions.push(`${incompleteDays} missed punch${incompleteDays === 1 ? "" : "es"} in this period.`);
   if (absentDays > 0) exceptions.push(`${absentDays} absent day${absentDays === 1 ? "" : "s"} with no approved leave.`);
   if (unpaidLeaveDays > 0) exceptions.push(`${unpaidLeaveDays} unpaid leave day${unpaidLeaveDays === 1 ? "" : "s"}. Gross is unchanged.`);
-  if (employee.monthlyGross <= 0) exceptions.push("Demo monthly gross is not set.");
+  if (employee.monthlyGross <= 0) exceptions.push("Monthly gross is not set.");
 
   const pendingLeave = state.leaveRequests.some(
     (item) => item.employeeId === employee.id && item.status === "pending" && item.startDate <= end && item.endDate >= start,
@@ -213,4 +213,4 @@ export function runTotals(run: Pick<PayrollRun, "lines">) {
 }
 
 export const PAYROLL_ASSUMPTION =
-  "Demo payroll uses the configured monthly gross, plus any manual adjustment and approved expense reimbursements. Tax, provident fund, professional tax, overtime, and other statutory rules are not configured and are not calculated. Unpaid leave is shown for review and does not change gross pay.";
+  "Payroll uses the configured monthly gross, plus any manual adjustment and approved expense reimbursements. Tax, provident fund, professional tax, overtime, and other statutory rules are not configured and are not calculated. Unpaid leave is shown for review and does not change gross pay.";

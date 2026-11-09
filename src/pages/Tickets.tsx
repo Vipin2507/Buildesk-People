@@ -56,7 +56,7 @@ export function Tickets() {
               </Field>
             </div>
             <Field label="Description"><textarea value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
-            <Field label="Attachment (optional)" hint="The demo stores the file name only.">
+            <Field label="Attachment (optional)" hint="The file name is stored. The file itself is not uploaded.">
               <input type="file" onChange={(event) => setAttachment(event.target.files?.[0]?.name ?? "")} />
             </Field>
             <p className="muted">This goes to the {category} queue. Facilities requests are handled with HR.</p>

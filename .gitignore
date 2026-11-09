@@ -3,5 +3,7 @@ dist
 .DS_Store
 *.local
 .vite
+.env
 data/*.sqlite
 data/*.sqlite-*
+data/photos/

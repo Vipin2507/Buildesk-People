@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EmployeeForm } from "../components/employee-form";
-import { Banner, Button, DataTable, EmptyState, Field, Modal, PageHeader, StatusBadge, Tabs } from "../components/ui";
+import { Avatar, Banner, Button, DataTable, EmptyState, Field, Modal, PageHeader, StatusBadge, Tabs } from "../components/ui";
+import { punchLocationText } from "../domain/location";
 import { leaveSummaries } from "../domain/leave";
 import { policyApplies, publishedVersion } from "../domain/policies";
-import { canOpenProfile, canSeeCompensation, canSeeSection, type ProfileSection } from "../lib/access";
+import { PhotoActions } from "../components/photo-editor";
+import { canEditPhoto, canOpenProfile, canSeeCompensation, canSeeSection, type ProfileSection } from "../lib/access";
+import { photoSrc } from "../lib/photo";
 import { downloadText } from "../lib/download";
 import { formatDate, formatDateTime, formatDuration, formatMoney, formatTime, fullName, labelFor } from "../lib/format";
 import { useTab } from "../lib/useTab";
@@ -26,12 +29,12 @@ const SECTIONS: { id: ProfileSection; label: string }[] = [
 
 export function Person() {
   const { id } = useParams();
-  const { state, user, can } = useApp();
+  const { state, user, can, actions } = useApp();
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useTab(SECTIONS.map((item) => item.id), "personal");
   const employee = state.employees.find((item) => item.id === id);
   if (!user) return null;
-  if (!employee) return <EmptyState title="Employee not found" body="That profile is not in this demo workspace." action={<Link className="btn btn-secondary" to="/people">Back to people</Link>} />;
+  if (!employee) return <EmptyState title="Employee not found" body="That profile is not in this workspace." action={<Link className="btn btn-secondary" to="/people">Back to people</Link>} />;
   if (!canOpenProfile(state, user, employee)) return <EmptyState title="Profile unavailable" body="You can open your own profile and the people your role is allowed to see." action={<Link className="btn btn-secondary" to="/people">Back to people</Link>} />;
   const allowed = canSeeSection(state, user, employee, tab as ProfileSection);
   return (
@@ -42,9 +45,24 @@ export function Person() {
         crumbs={[{ label: "People", to: "/people" }, { label: fullName(employee) }]}
         actions={can("people.manage") ? <Button onClick={() => setEditing(true)}>Edit record</Button> : undefined}
       />
+      <section className="profile-hero panel">
+        <Avatar name={fullName(employee)} color={employee.avatarColor} size={72} photoSrc={photoSrc(employee.id, employee.photoUpdatedAt)} labelled />
+        <div>
+          <div className="profile-hero-line"><StatusBadge value={employee.status} /><span>{labelFor(employee.employmentType)}</span></div>
+          <p>{state.departments.find((item) => item.id === employee.departmentId)?.name ?? "—"} · {state.locations.find((item) => item.id === employee.locationId)?.name ?? "—"}</p>
+          <PhotoActions
+            name={fullName(employee)}
+            hasPhoto={Boolean(employee.photoUpdatedAt)}
+            canEdit={canEditPhoto(state, user, employee)}
+            savePhoto={(file) => actions.savePhoto(employee.id, file)}
+            removePhoto={() => actions.removePhoto(employee.id)}
+          />
+          <p className="muted">Anyone who can open this profile can see this photo.</p>
+        </div>
+      </section>
       <Tabs tabs={SECTIONS} value={tab} onChange={setTab} />
       {allowed ? <Section employee={employee} section={tab as ProfileSection} /> : <Restricted section={tab as ProfileSection} self={employee.id === user.id} />}
-      <Modal open={editing} title={`Edit ${fullName(employee)}`} onClose={() => setEditing(false)}>
+      <Modal open={editing} title={`Edit ${fullName(employee)}`} className="modal-wide" onClose={() => setEditing(false)}>
         <EmployeeForm employee={employee} onDone={() => setEditing(false)} />
       </Modal>
     </div>
@@ -120,7 +138,7 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
     return (
       <section className="panel">
         <h2>Salary Details</h2>
-        <p className="muted">Demo payroll uses a monthly gross plus an explicit adjustment. It does not calculate tax, PF, or professional tax.</p>
+        <p className="muted">Payroll uses a monthly gross plus an explicit adjustment. It does not calculate tax, PF, or professional tax.</p>
         {showGross && (
           <>
             <dl className="dl"><dt>Monthly gross</dt><dd>{formatMoney(employee.monthlyGross, state.settings.currency)}</dd></dl>
@@ -142,7 +160,7 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
               <strong>{formatDate(item.periodStart)} – {formatDate(item.periodEnd)}</strong>
               <div className="muted">Payable {formatMoney(item.payable, state.settings.currency)} · present {item.presentDays} · unpaid leave {item.unpaidLeaveDays}</div>
             </div>
-            <Button variant="secondary" onClick={() => downloadText(`payslip-${employee.employeeCode}-${item.periodStart}.txt`, `Payslip ${item.periodStart} to ${item.periodEnd}\nPayable ${formatMoney(item.payable, state.settings.currency)}\nDemo payslip. Statutory deductions are not calculated.`)}>Download</Button>
+            <Button variant="secondary" onClick={() => downloadText(`payslip-${employee.employeeCode}-${item.periodStart}.txt`, `Payslip ${item.periodStart} to ${item.periodEnd}\nPayable ${formatMoney(item.payable, state.settings.currency)}\nStatutory deductions are not calculated.`)}>Download</Button>
           </div>
         ))}
       </section>
@@ -205,7 +223,7 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
               <strong>{item.title}</strong>
               <div className="muted">{item.kind} · {labelFor(item.sensitivity)} · {formatDateTime(item.uploadedAt)}</div>
             </div>
-            <Button variant="secondary" onClick={() => downloadText(item.fileName, `${item.title}\n${item.kind}\nDemo copy. The uploaded file is stored by name only.`)}>Download</Button>
+            <Button variant="secondary" onClick={() => downloadText(item.fileName, `${item.title}\n${item.kind}\nThe uploaded file is stored by name only.`)}>Download</Button>
           </div>
         ))}
         {can("documents.manage") && (
@@ -228,7 +246,7 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
                 </select>
               </Field>
             </div>
-            <Field label="File" hint="The demo stores the file name, not the file.">
+            <Field label="File" hint="The file name is stored. The file itself is not uploaded.">
               <input type="file" onChange={(event) => setDocFile(event.target.files?.[0]?.name ?? "")} />
             </Field>
             <Button type="submit">Upload document</Button>
@@ -253,6 +271,7 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
           { key: "in", header: "In", render: (row) => formatTime(row.clockIn) },
           { key: "out", header: "Out", render: (row) => formatTime(row.clockOut) },
           { key: "where", header: "Work location", render: (row) => row.workMode ? labelFor(row.workMode) : "—" },
+          { key: "device", header: "Device location", render: (row) => punchLocationText(row) },
           { key: "status", header: "Status", render: (row) => <StatusBadge value={row.status} /> },
           { key: "note", header: "Exception", render: (row) => row.status === "present" ? "—" : row.note || labelFor(row.status) },
         ]}
