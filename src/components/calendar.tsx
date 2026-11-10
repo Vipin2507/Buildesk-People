@@ -92,7 +92,7 @@ export function MonthCalendar({ markers, onSelect, describe }: { markers: CalMar
           ))}
         </ul>
       )}
-      <div className="stack" style={{ marginTop: 8 }}>
+      <div className="cal-day-summary" aria-live="polite">
         {describe ? describe(selected) : selectedMarkers.length === 0 ? <p className="muted">Nothing scheduled on {formatDate(selected)}.</p> : selectedMarkers.map((item) => {
           const body = <span><strong>{item.label}</strong>{item.kind && <span className="muted" style={{ display: "block" }}>{labelFor(item.kind)}</span>}</span>;
           return item.href

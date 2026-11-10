@@ -429,6 +429,51 @@ export interface DayLine {
   href: string;
 }
 
+export interface DayAttendanceBrief {
+  title: string;
+  href: string;
+  scope: "company" | "team" | "self";
+  counts?: PresenceCounts;
+  status?: string;
+  detail: string;
+}
+
+/** Compact attendance snapshot for the Overview calendar day panel. */
+export function dayAttendanceBrief(state: AppState, user: Employee, date: string): DayAttendanceBrief | null {
+  if (hasPermission(state, user, "attendance.company")) {
+    const counts = presenceCounts(state, scopedPeople(state, user, "company", "all", "all"), date, date);
+    return {
+      title: "Workforce attendance",
+      href: attendanceHref("company", date, "all", "all", false),
+      scope: "company",
+      counts,
+      detail: `${counts.present} present · ${counts.remote} remote · ${counts.onLeave} on leave · ${counts.absent} absent`,
+    };
+  }
+  if (hasPermission(state, user, "attendance.team")) {
+    const counts = presenceCounts(state, scopedPeople(state, user, "team", "all", "all"), date, date);
+    return {
+      title: "Team attendance",
+      href: attendanceHref("team", date, "all", "all", false),
+      scope: "team",
+      counts,
+      detail: `${counts.present} present · ${counts.remote} remote · ${counts.onLeave} on leave · ${counts.absent} absent`,
+    };
+  }
+  if (hasPermission(state, user, "attendance.self")) {
+    const record = recordOn(state, user.id, date);
+    const where = record?.workMode ? labelFor(record.workMode) : "No work location recorded";
+    return {
+      title: "Your attendance",
+      href: "/attendance?tab=mine",
+      scope: "self",
+      status: record?.status ?? "incomplete",
+      detail: record ? `${labelFor(record.status)} · ${where}` : `No punch · ${where}`,
+    };
+  }
+  return null;
+}
+
 export function dayBrief(state: AppState, user: Employee, date: string): DayLine[] {
   const lines: DayLine[] = [];
   const companyWide = hasPermission(state, user, "leave.manage") || user.role === "admin";
@@ -473,30 +518,13 @@ export function dayBrief(state: AppState, user: Employee, date: string): DayLine
       href: "/leave?tab=calendar",
     });
   });
-  if (hasPermission(state, user, "attendance.company")) {
-    const counts = presenceCounts(state, scopedPeople(state, user, "company", "all", "all"), date, date);
+  const attendance = dayAttendanceBrief(state, user, date);
+  if (attendance) {
     lines.push({
       id: `att-${date}`,
-      title: "Workforce attendance",
-      detail: `${counts.present} present · ${counts.remote} remote · ${counts.onLeave} on leave · ${counts.absent} absent`,
-      href: attendanceHref("company", date, "all", "all", false),
-    });
-  } else if (hasPermission(state, user, "attendance.team")) {
-    const counts = presenceCounts(state, scopedPeople(state, user, "team", "all", "all"), date, date);
-    lines.push({
-      id: `att-${date}`,
-      title: "Team attendance",
-      detail: `${counts.present} present · ${counts.remote} remote · ${counts.onLeave} on leave · ${counts.absent} absent`,
-      href: attendanceHref("team", date, "all", "all", false),
-    });
-  } else if (hasPermission(state, user, "attendance.self")) {
-    const record = recordOn(state, user.id, date);
-    const where = record?.workMode ? labelFor(record.workMode) : "No work location recorded";
-    lines.push({
-      id: `att-${date}`,
-      title: "Your attendance",
-      detail: record ? `${labelFor(record.status)} · ${where}` : `No punch · ${where}`,
-      href: "/attendance?tab=mine",
+      title: attendance.title,
+      detail: attendance.detail,
+      href: attendance.href,
     });
   }
   return lines;

@@ -847,6 +847,102 @@ button.stat[aria-pressed="true"] { border-color: var(--color-primary); box-shado
 .snapshot span { color: var(--muted); font-size: 13px; }
 .queue-row { display: grid; grid-template-columns: minmax(0, 1.5fr) auto auto; gap: 8px; align-items: center; }
 .cal-scroll { overflow-x: auto; }
+.cal-day-summary {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.cal-day-panel {
+  display: grid;
+  gap: 10px;
+  animation: cal-day-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes cal-day-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cal-day-panel { animation: none; }
+}
+.cal-day-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cal-day-panel-head strong { display: block; }
+.cal-day-panel-head .muted { margin: 2px 0 0; font-size: 13px; }
+.cal-day-more {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background: var(--color-primary-subtle);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.cal-day-more:hover { border-color: var(--color-primary); }
+.cal-day-attendance {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--hover);
+  border: 1px solid var(--border);
+}
+.cal-day-attendance-title {
+  font-weight: 700;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.cal-day-attendance-title:hover { text-decoration: underline; }
+.cal-day-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.cal-day-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.cal-day-stat strong {
+  font-size: 18px;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.cal-day-stat.tone-green { border-color: color-mix(in srgb, var(--success-600) 28%, var(--border)); }
+.cal-day-stat.tone-blue { border-color: color-mix(in srgb, var(--primary-600) 28%, var(--border)); }
+.cal-day-stat.tone-amber { border-color: color-mix(in srgb, var(--warning-600) 28%, var(--border)); }
+.cal-day-stat.tone-red { border-color: color-mix(in srgb, var(--error-600) 28%, var(--border)); }
+.cal-day-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.cal-day-events a {
+  display: grid;
+  gap: 2px;
+  text-decoration: none;
+  color: inherit;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--color-surface);
+}
+.cal-day-events a:hover { border-color: var(--border-strong); background: var(--hover); }
+.cal-day-events .muted { font-size: 13px; }
 .cal-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; list-style: none; padding: 8px 0 0; margin: 0; color: var(--muted); font-size: 13px; }
 .cal-legend i, .cal-day .mark.kind-holiday, .cal-day .mark.kind-event, .cal-day .mark.kind-festival, .cal-day .mark.kind-birthday, .cal-day .mark.kind-leave, .cal-day .mark.kind-leave_pending {
   width: 8px; height: 8px; border-radius: 99px; display: inline-block;

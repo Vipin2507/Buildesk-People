@@ -10,6 +10,7 @@ import {
   approvalQueue,
   attendanceHref,
   attentionItems,
+  dayAttendanceBrief,
   dayBrief,
   dayContext,
   leaveAvailable,
@@ -332,15 +333,60 @@ function PayrollCard() {
 function DayList({ date }: { date: string }) {
   const { state, user } = useApp();
   if (!user) return null;
-  const lines = dayBrief(state, user, date);
-  if (lines.length === 0) return <p className="muted">Nothing scheduled on {formatDate(date)}.</p>;
+  const attendance = dayAttendanceBrief(state, user, date);
+  const events = dayBrief(state, user, date).filter((line) => !line.id.startsWith("att-")).slice(0, 3);
+  const viewMore = attendance?.href ?? (events[0]?.href || "/leave?tab=calendar");
+  const empty = !attendance && events.length === 0;
+
   return (
-    <div className="stack">
-      {lines.map((line) => (
-        <Link key={line.id} to={line.href} className="notice">
-          <span><strong>{line.title}</strong><span className="muted" style={{ display: "block" }}>{line.detail}</span></span>
-        </Link>
-      ))}
+    <div key={date} className="cal-day-panel" aria-live="polite">
+      <div className="cal-day-panel-head">
+        <div>
+          <strong>{formatDateLong(date)}</strong>
+          <p className="muted">Selected day summary</p>
+        </div>
+        <Link className="cal-day-more" to={viewMore}>View more</Link>
+      </div>
+
+      {attendance?.counts && (
+        <div className="cal-day-attendance">
+          <Link className="cal-day-attendance-title" to={attendance.href}>{attendance.title}</Link>
+          <div className="cal-day-stats" aria-label={attendance.detail}>
+            <span className="cal-day-stat tone-green"><strong>{attendance.counts.present}</strong> present</span>
+            <span className="cal-day-stat tone-blue"><strong>{attendance.counts.remote}</strong> remote</span>
+            <span className="cal-day-stat tone-amber"><strong>{attendance.counts.onLeave}</strong> on leave</span>
+            <span className="cal-day-stat tone-red"><strong>{attendance.counts.absent}</strong> absent</span>
+          </div>
+          <p className="faint">
+            {attendance.counts.headcount} people in view
+            {attendance.counts.present > 0 ? ` · ${attendance.counts.present} clocked in as present or late` : " · nobody marked present yet"}
+            {attendance.counts.onLeave > 0 ? ` · ${attendance.counts.onLeave} on approved leave` : ""}
+            {attendance.counts.absent > 0 ? ` · ${attendance.counts.absent} absent` : ""}.
+          </p>
+        </div>
+      )}
+
+      {attendance?.scope === "self" && (
+        <div className="cal-day-attendance">
+          <Link className="cal-day-attendance-title" to={attendance.href}>{attendance.title}</Link>
+          <p><StatusBadge value={attendance.status ?? "incomplete"} /> <span className="muted">{attendance.detail}</span></p>
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <ul className="cal-day-events">
+          {events.map((line) => (
+            <li key={line.id}>
+              <Link to={line.href}>
+                <strong>{line.title}</strong>
+                <span className="muted">{line.detail}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {empty && <p className="muted">Nothing scheduled on {formatDate(date)}.</p>}
     </div>
   );
 }
