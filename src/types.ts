@@ -51,7 +51,9 @@ export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type AssetType = "laptop" | "phone" | "access_card" | "monitor" | "other";
 export type AssetStatus = "available" | "assigned" | "repair" | "retired";
 export type AssetCondition = "good" | "fair" | "poor";
-export type PayrollStatus = "draft" | "in_review" | "finalized" | "paid";
+export type PayrollStatus = "draft" | "calculated" | "in_review" | "verified" | "finalized" | "paid" | "failed";
+export type PayrollValueSource = "attendance" | "employee" | "manual" | "imported" | "calculated" | "unconfigured";
+export type PayrollRounding = "none" | "nearest_rupee" | "nearest_half";
 export type PartialDay = "none" | "first_half" | "second_half";
 export type AuditArea =
   | "people"
@@ -139,6 +141,10 @@ export interface Employee {
   showBirthday: boolean;
   /** Configured monthly gross used for payroll. Statutory deductions are not calculated from this figure. */
   monthlyGross: number;
+  /** Optional bank details for payroll payment. Masked in the UI unless payroll.manage is granted. */
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
   avatarColor: string;
   /** Set when a profile photo file is stored for this employee. The image itself is not kept in this record. */
   photoUpdatedAt?: string | null;
@@ -161,6 +167,11 @@ export interface OrgSettings {
   weeklyOff: number[];
   payrollStartDay: number;
   payrollEndDay: number;
+  /** Month number 1–12 when the financial year starts. Used only to group payroll history folders. */
+  financialYearStartMonth?: number;
+  /** When set, daily wage = monthly gross ÷ this divisor. Null means daily wage is not calculated. */
+  payrollDailyWageDivisor?: number | null;
+  payrollRounding?: PayrollRounding;
   leaveTypes: LeaveType[];
   expenseCategories: string[];
   ticketCategories: string[];
@@ -405,6 +416,36 @@ export interface PayrollLine {
   adjustmentReason: string;
   exceptions: string[];
   payable: number;
+  /** Derived/manual register fields. Older runs may omit these; normalize before display. */
+  fullDays?: number;
+  halfDays?: number;
+  weeklyOffs?: number;
+  paidLeaveDays?: number;
+  paidDays?: number;
+  lopDays?: number;
+  dailyWage?: number | null;
+  overtime?: number;
+  extras?: number;
+  arrears?: number;
+  grossEarnings?: number;
+  pf?: number;
+  esic?: number;
+  penalties?: number;
+  loan?: number;
+  otherDeductions?: number;
+  totalDeductions?: number;
+  needsRecalc?: boolean;
+  sources?: Partial<Record<string, PayrollValueSource>>;
+}
+
+export interface PayrollImportRecord {
+  id: string;
+  at: string;
+  actorId: string;
+  fileName: string;
+  rowCount: number;
+  warningCount: number;
+  summary: string;
 }
 
 export interface PayrollRun {
@@ -421,6 +462,14 @@ export interface PayrollRun {
   paidAt: string | null;
   warnings: string[];
   lines: PayrollLine[];
+  calculatedAt?: string | null;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  verifyNote?: string;
+  paymentReference?: string | null;
+  paymentNote?: string | null;
+  recalcRequired?: boolean;
+  importHistory?: PayrollImportRecord[];
 }
 
 export interface Payslip {
@@ -439,6 +488,17 @@ export interface Payslip {
   unpaidLeaveDays: number;
   absentDays: number;
   generatedAt: string;
+  published?: boolean;
+  overtime?: number;
+  extras?: number;
+  arrears?: number;
+  pf?: number;
+  esic?: number;
+  penalties?: number;
+  loan?: number;
+  otherDeductions?: number;
+  totalDeductions?: number;
+  grossEarnings?: number;
 }
 
 export interface AppNotification {

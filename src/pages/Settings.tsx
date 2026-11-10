@@ -3,7 +3,8 @@ import { Banner, Button, DataTable, Field, NoAccess, PageHeader, Tabs } from "..
 import { PERMISSIONS, ROLES } from "../lib/access";
 import { currentPeriod } from "../domain/payroll";
 import { PAYROLL_ASSUMPTION } from "../domain/payroll";
-import { formatDateTime, labelFor, rangeLabel } from "../lib/format";
+import { formatDateTime, labelFor, monthLabel, rangeLabel } from "../lib/format";
+import type { PayrollRounding } from "../types";
 import { useTab } from "../lib/useTab";
 import { useApp } from "../store/store";
 import type { AuditArea } from "../types";
@@ -12,7 +13,7 @@ export function Settings() {
   const { can } = useApp();
   const tabs = [
     ...(can("settings.org") ? [{ id: "org", label: "Organization" }, { id: "schedule", label: "Schedule" }, { id: "catalog", label: "Departments and locations" }, { id: "leave", label: "Leave types" }, { id: "categories", label: "Categories" }] : []),
-    ...(can("settings.payroll") ? [{ id: "payroll", label: "Payroll period" }] : []),
+    ...(can("settings.payroll") ? [{ id: "payroll", label: "Payroll" }] : []),
     ...(can("settings.roles") ? [{ id: "roles", label: "Roles" }] : []),
     ...(can("audit.view") ? [{ id: "audit", label: "Audit history" }] : []),
   ];
@@ -197,6 +198,9 @@ function PayrollSettings() {
   const { state, actions } = useApp();
   const [start, setStart] = useState(state.settings.payrollStartDay);
   const [end, setEnd] = useState(state.settings.payrollEndDay);
+  const [fyMonth, setFyMonth] = useState(state.settings.financialYearStartMonth ?? 4);
+  const [divisor, setDivisor] = useState(state.settings.payrollDailyWageDivisor == null ? "" : String(state.settings.payrollDailyWageDivisor));
+  const [rounding, setRounding] = useState<PayrollRounding>(state.settings.payrollRounding ?? "none");
   const [error, setError] = useState("");
   const period = currentPeriod({ ...state.settings, payrollStartDay: start, payrollEndDay: end });
   return (
@@ -205,13 +209,36 @@ function PayrollSettings() {
       <div className="form-grid">
         <Field label="Period starts on day"><input type="number" min={1} max={31} value={start} onChange={(event) => setStart(Number(event.target.value))} /></Field>
         <Field label="Period ends on day"><input type="number" min={1} max={31} value={end} onChange={(event) => setEnd(Number(event.target.value))} /></Field>
+        <Field label="Financial year starts">
+          <select value={fyMonth} onChange={(event) => setFyMonth(Number(event.target.value))}>
+            {Array.from({ length: 12 }, (_, index) => (
+              <option key={index + 1} value={index + 1}>{monthLabel(2026, index)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Daily wage divisor" hint="Leave blank until your company confirms the divisor. Used only as monthly gross ÷ divisor.">
+          <input type="number" min={1} step="0.5" value={divisor} placeholder="Not configured" onChange={(event) => setDivisor(event.target.value)} />
+        </Field>
+        <Field label="Rounding">
+          <select value={rounding} onChange={(event) => setRounding(event.target.value as PayrollRounding)}>
+            <option value="none">None (exact amounts)</option>
+            <option value="nearest_rupee">Nearest rupee</option>
+            <option value="nearest_half">Nearest half rupee</option>
+          </select>
+        </Field>
       </div>
-      <p>With these days, the current period would be {rangeLabel(period.start, period.end)}. Shorter months end on the last calendar day.</p>
+      <p>With these days, the current period would be {rangeLabel(period.start, period.end)}. Shorter months end on the last calendar day. Financial year grouping starts in {monthLabel(2026, fyMonth - 1)}.</p>
       {error && <Banner tone="error">{error}</Banner>}
       <Button onClick={async () => {
-        const result = await actions.updateSettings({ payrollStartDay: start, payrollEndDay: end });
+        const result = await actions.updateSettings({
+          payrollStartDay: start,
+          payrollEndDay: end,
+          financialYearStartMonth: fyMonth,
+          payrollDailyWageDivisor: divisor.trim() === "" ? null : Number(divisor),
+          payrollRounding: rounding,
+        });
         setError(result.ok ? "" : result.message);
-      }}>Save payroll period</Button>
+      }}>Save payroll settings</Button>
     </section>
   );
 }

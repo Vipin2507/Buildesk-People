@@ -5,7 +5,7 @@ import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { createsCycle } from "../domain/org";
-import { buildPayrollLines, currentPeriod, periodForMonth, periodWarnings } from "../domain/payroll";
+import { applyAdjustments, buildPayrollLines, computePayable, currentPeriod, normalizeLine, periodForMonth, periodWarnings } from "../domain/payroll";
 import { isValidEmail, normalizeEmail } from "../lib/auth";
 import { formatDate, formatTime, fullName, rangeLabel } from "../lib/format";
 import { avatarColorAt } from "../lib/palette";
@@ -33,6 +33,7 @@ import type {
   LeaveType,
   NotificationKind,
   PartialDay,
+  PayrollLine,
   PayrollRun,
   PayrollStatus,
   Payslip,
@@ -1039,7 +1040,7 @@ export function createPayrollRun(state: AppState, year: number, monthIndex: numb
   const actor = requireUser(state, "payroll.manage");
   if (!isEmployee(actor)) return actor;
   const period = periodForMonth(year, monthIndex, state.settings);
-  if (state.payrollRuns.some((item) => item.periodStart === period.start && item.periodEnd === period.end)) {
+  if (state.payrollRuns.some((item) => item.periodStart === period.start && item.periodEnd === period.end && item.status !== "failed")) {
     return fail(state, "A payroll run already exists for this period.");
   }
   const built = buildPayrollLines(state, period.start, period.end);
@@ -1057,6 +1058,14 @@ export function createPayrollRun(state: AppState, year: number, monthIndex: numb
     paidAt: null,
     warnings: [...periodWarnings(period.excluded, state.settings), ...built.warnings],
     lines: built.lines,
+    calculatedAt: null,
+    verifiedAt: null,
+    verifiedBy: null,
+    verifyNote: "",
+    paymentReference: null,
+    paymentNote: null,
+    recalcRequired: false,
+    importHistory: [],
   };
   return ok(pushAudit({ ...state, payrollRuns: [run, ...state.payrollRuns] }, actor.id, "payroll", `Created a draft payroll run for ${rangeLabel(period.start, period.end)}.`, "payroll"), "Draft payroll run created.", run.id);
 }
@@ -1066,15 +1075,80 @@ export function refreshPayrollRun(state: AppState, runId: string): Outcome {
   if (!isEmployee(actor)) return actor;
   const run = state.payrollRuns.find((item) => item.id === runId);
   if (!run) return fail(state, "That payroll run was not found.", true);
-  if (run.status === "finalized" || run.status === "paid") return fail(state, "Finalized payroll is locked. Refresh is available only while the run is draft or in review.", true);
+  if (run.status === "finalized" || run.status === "paid") return fail(state, "Finalized payroll is locked. Refresh is available only before approval.", true);
   const built = buildPayrollLines(state, run.periodStart, run.periodEnd, run.id);
+  const lines = applyAdjustments(built.lines, run.lines).map((line) => normalizeLine(line, state.settings));
   const payrollRuns = state.payrollRuns.map((item) =>
-    item.id === runId ? { ...item, lines: built.lines, warnings: [...periodWarnings(item.excludedDates, state.settings), ...built.warnings], updatedAt: nowIso() } : item,
+    item.id === runId
+      ? {
+          ...item,
+          lines,
+          warnings: [...periodWarnings(item.excludedDates, state.settings), ...built.warnings],
+          updatedAt: nowIso(),
+          status: item.status === "calculated" || item.status === "verified" || item.status === "in_review" ? "draft" : item.status,
+          recalcRequired: false,
+          calculatedAt: null,
+          verifiedAt: null,
+          verifiedBy: null,
+        }
+      : item,
   );
   return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Refreshed payroll inputs for ${rangeLabel(run.periodStart, run.periodEnd)}.`, "payroll"), "Inputs refreshed from attendance, leave, and approved expenses.");
 }
 
-export function updatePayrollLine(state: AppState, runId: string, employeeId: string, adjustment: number, reason: string): Outcome {
+export function calculatePayrollRun(state: AppState, runId: string): Outcome {
+  const actor = requireUser(state, "payroll.manage");
+  if (!isEmployee(actor)) return actor;
+  const run = state.payrollRuns.find((item) => item.id === runId);
+  if (!run) return fail(state, "That payroll run was not found.", true);
+  if (run.status === "finalized" || run.status === "paid") return fail(state, "This run is locked.", true);
+  const built = buildPayrollLines(state, run.periodStart, run.periodEnd, run.id);
+  const lines = applyAdjustments(built.lines, run.lines).map((line) => normalizeLine({ ...line, needsRecalc: false }, state.settings));
+  const at = nowIso();
+  const payrollRuns = state.payrollRuns.map((item) =>
+    item.id === runId
+      ? {
+          ...item,
+          status: "calculated" as const,
+          lines,
+          warnings: [...periodWarnings(item.excludedDates, state.settings), ...built.warnings],
+          updatedAt: at,
+          calculatedAt: at,
+          recalcRequired: false,
+        }
+      : item,
+  );
+  return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Calculated payroll for ${rangeLabel(run.periodStart, run.periodEnd)}.`, "payroll"), "Payroll calculated. Review employee rows before verification.");
+}
+
+export function verifyPayrollRun(state: AppState, runId: string, note: string): Outcome {
+  const actor = requireUser(state, "payroll.manage");
+  if (!isEmployee(actor)) return actor;
+  const run = state.payrollRuns.find((item) => item.id === runId);
+  if (!run) return fail(state, "That payroll run was not found.", true);
+  if (!(run.status === "calculated" || run.status === "in_review")) return fail(state, "Verify after the run is calculated or in review.", true);
+  if (run.recalcRequired) return fail(state, "Recalculate this run before verifying. Inputs changed after the last calculation.", true);
+  const at = nowIso();
+  const payrollRuns = state.payrollRuns.map((item) =>
+    item.id === runId ? { ...item, status: "verified" as const, verifiedAt: at, verifiedBy: actor.id, verifyNote: note.trim(), updatedAt: at } : item,
+  );
+  return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Verified payroll for ${rangeLabel(run.periodStart, run.periodEnd)}.`, "payroll"), "Payroll verified.");
+}
+
+export type PayrollLinePatch = {
+  adjustment?: number;
+  adjustmentReason?: string;
+  overtime?: number;
+  extras?: number;
+  arrears?: number;
+  pf?: number;
+  esic?: number;
+  penalties?: number;
+  loan?: number;
+  otherDeductions?: number;
+};
+
+export function updatePayrollLine(state: AppState, runId: string, employeeId: string, adjustment: number, reason: string, patch: PayrollLinePatch = {}): Outcome {
   const actor = requireUser(state, "payroll.manage");
   if (!isEmployee(actor)) return actor;
   const run = state.payrollRuns.find((item) => item.id === runId);
@@ -1082,29 +1156,105 @@ export function updatePayrollLine(state: AppState, runId: string, employeeId: st
   if (run.status === "finalized" || run.status === "paid") return fail(state, "This run is locked.", true);
   if (Number.isNaN(adjustment)) return fail(state, "Enter a valid adjustment amount.");
   if (adjustment !== 0 && reason.trim().length < 8) return fail(state, "Add a short reason for the manual adjustment.");
+  const moneyFields = ["overtime", "extras", "arrears", "pf", "esic", "penalties", "loan", "otherDeductions"] as const;
+  for (const key of moneyFields) {
+    const value = patch[key];
+    if (value !== undefined && (Number.isNaN(value) || value < 0)) return fail(state, `Enter a valid ${key} amount.`);
+  }
   const payrollRuns = state.payrollRuns.map((item) =>
     item.id !== runId
       ? item
       : {
           ...item,
           updatedAt: nowIso(),
-          lines: item.lines.map((line) =>
-            line.employeeId === employeeId
-              ? { ...line, adjustment: Math.round(adjustment), adjustmentReason: reason.trim(), payable: line.monthlyGross + Math.round(adjustment) + line.reimbursement }
-              : line,
-          ),
+          recalcRequired: item.status === "calculated" || item.status === "verified" || item.status === "in_review",
+          status: item.status === "verified" ? "in_review" as const : item.status,
+          lines: item.lines.map((line) => {
+            if (line.employeeId !== employeeId) return line;
+            const next = {
+              ...line,
+              adjustment: Math.round(adjustment),
+              adjustmentReason: reason.trim(),
+              overtime: patch.overtime ?? line.overtime ?? 0,
+              extras: patch.extras ?? line.extras ?? 0,
+              arrears: patch.arrears ?? line.arrears ?? 0,
+              pf: patch.pf ?? line.pf ?? 0,
+              esic: patch.esic ?? line.esic ?? 0,
+              penalties: patch.penalties ?? line.penalties ?? 0,
+              loan: patch.loan ?? line.loan ?? 0,
+              otherDeductions: patch.otherDeductions ?? line.otherDeductions ?? 0,
+              needsRecalc: true,
+              sources: {
+                ...line.sources,
+                adjustment: "manual" as const,
+                overtime: "manual" as const,
+                extras: "manual" as const,
+                arrears: "manual" as const,
+                pf: "manual" as const,
+                esic: "manual" as const,
+                penalties: "manual" as const,
+                loan: "manual" as const,
+                otherDeductions: "manual" as const,
+              },
+            };
+            const money = computePayable(next);
+            return normalizeLine({ ...next, grossEarnings: money.grossEarnings, totalDeductions: money.totalDeductions, payable: money.payable }, state.settings);
+          }),
         },
   );
-  return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Updated the manual adjustment for ${name(state, employeeId)}.`, "payroll"), "Adjustment saved.");
+  return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Updated payroll inputs for ${name(state, employeeId)}.`, "payroll"), "Employee payroll line saved.");
 }
 
-export function advancePayroll(state: AppState, runId: string, status: Extract<PayrollStatus, "in_review" | "finalized" | "paid">): Outcome {
+export function importPayrollLines(state: AppState, runId: string, lines: PayrollLine[], fileName: string, warningCount: number): Outcome {
   const actor = requireUser(state, "payroll.manage");
   if (!isEmployee(actor)) return actor;
   const run = state.payrollRuns.find((item) => item.id === runId);
   if (!run) return fail(state, "That payroll run was not found.", true);
-  const allowed = (run.status === "draft" && status === "in_review") || (run.status === "in_review" && status === "finalized") || (run.status === "finalized" && status === "paid");
+  if (run.status === "finalized" || run.status === "paid") return fail(state, "Cannot import into a finalized payroll run.", true);
+  const at = nowIso();
+  const history = {
+    id: uid("pimp"),
+    at,
+    actorId: actor.id,
+    fileName: fileName.trim() || "payroll-import.csv",
+    rowCount: lines.length,
+    warningCount,
+    summary: `Imported spreadsheet values into ${rangeLabel(run.periodStart, run.periodEnd)}.`,
+  };
+  const payrollRuns = state.payrollRuns.map((item) =>
+    item.id === runId
+      ? {
+          ...item,
+          lines: lines.map((line) => normalizeLine(line, state.settings)),
+          updatedAt: at,
+          recalcRequired: true,
+          status: item.status === "verified" || item.status === "calculated" ? "draft" as const : item.status,
+          importHistory: [history, ...(item.importHistory ?? [])],
+        }
+      : item,
+  );
+  return ok(pushAudit({ ...state, payrollRuns }, actor.id, "payroll", `Imported payroll sheet “${history.fileName}” for ${rangeLabel(run.periodStart, run.periodEnd)}.`, "payroll"), "Import saved. Recalculate before verification.");
+}
+
+export function advancePayroll(
+  state: AppState,
+  runId: string,
+  status: Extract<PayrollStatus, "in_review" | "finalized" | "paid">,
+  payment?: { reference?: string; note?: string },
+): Outcome {
+  const actor = requireUser(state, "payroll.manage");
+  if (!isEmployee(actor)) return actor;
+  const run = state.payrollRuns.find((item) => item.id === runId);
+  if (!run) return fail(state, "That payroll run was not found.", true);
+  const allowed =
+    ((run.status === "draft" || run.status === "calculated" || run.status === "verified") && status === "in_review") ||
+    ((run.status === "in_review" || run.status === "verified" || run.status === "calculated") && status === "finalized") ||
+    (run.status === "finalized" && status === "paid");
   if (!allowed) return fail(state, "That status change isn't available for this run.", true);
+  if (status === "finalized" && run.recalcRequired) return fail(state, "Recalculate and verify this run before approval.", true);
+  if (status === "paid" && !(payment?.reference ?? run.paymentReference)?.trim()) {
+    return fail(state, "Add a payment reference or batch id before marking the run paid.");
+  }
   const at = nowIso();
   let expenses = state.expenses;
   let payslips = state.payslips;
@@ -1120,21 +1270,30 @@ export function advancePayroll(state: AppState, runId: string, status: Extract<P
         : item,
     );
     payslips = [
-      ...run.lines.map((line) => payslip(run, line, at)),
+      ...run.lines.map((line) => payslip(run, normalizeLine(line, state.settings), at)),
       ...state.payslips.filter((item) => item.runId !== run.id),
     ];
   }
   const payrollRuns = state.payrollRuns.map((item) =>
     item.id === runId
-      ? { ...item, status, updatedAt: at, finalizedAt: status === "finalized" ? at : item.finalizedAt, finalizedBy: status === "finalized" ? actor.id : item.finalizedBy, paidAt: status === "paid" ? at : item.paidAt }
+      ? {
+          ...item,
+          status,
+          updatedAt: at,
+          finalizedAt: status === "finalized" ? at : item.finalizedAt,
+          finalizedBy: status === "finalized" ? actor.id : item.finalizedBy,
+          paidAt: status === "paid" ? at : item.paidAt,
+          paymentReference: status === "paid" ? (payment?.reference ?? item.paymentReference ?? "").trim() : item.paymentReference,
+          paymentNote: status === "paid" ? (payment?.note ?? item.paymentNote ?? "").trim() : item.paymentNote,
+        }
       : item,
   );
   const summary =
     status === "in_review"
       ? `Sent payroll for ${rangeLabel(run.periodStart, run.periodEnd)} to review.`
       : status === "finalized"
-        ? `Finalized payroll for ${rangeLabel(run.periodStart, run.periodEnd)}.`
-        : `Marked payroll paid for ${rangeLabel(run.periodStart, run.periodEnd)}.`;
+        ? `Approved payroll for ${rangeLabel(run.periodStart, run.periodEnd)}.`
+        : `Marked payroll paid for ${rangeLabel(run.periodStart, run.periodEnd)}${payment?.reference ? ` (ref ${payment.reference})` : ""}.`;
   const notes: Array<Omit<AppNotification, "id" | "read" | "createdAt">> =
     status === "in_review"
       ? []
@@ -1145,27 +1304,39 @@ export function advancePayroll(state: AppState, runId: string, status: Extract<P
           href: "/payroll",
           kind: "payroll" as const,
         }));
-  const toast = status === "in_review" ? "Run sent for review." : status === "finalized" ? "Payroll finalized and payslips created." : "Payroll marked paid.";
+  const toast = status === "in_review" ? "Run sent for review." : status === "finalized" ? "Payroll approved and payslips created." : "Payroll marked paid.";
   return ok(pushNotes(pushAudit({ ...state, payrollRuns, expenses, payslips }, actor.id, "payroll", summary, "payroll"), notes), toast);
 }
 
 function payslip(run: PayrollRun, line: PayrollRun["lines"][number], at: string): Payslip {
+  const normalized = normalizeLine(line);
   return {
     id: `slip_${run.id}_${line.employeeId}`,
     runId: run.id,
     employeeId: line.employeeId,
     periodStart: run.periodStart,
     periodEnd: run.periodEnd,
-    monthlyGross: line.monthlyGross,
-    adjustment: line.adjustment,
-    adjustmentReason: line.adjustmentReason,
-    reimbursement: line.reimbursement,
-    payable: line.payable,
-    presentDays: line.presentDays,
-    leaveDays: line.leaveDays,
-    unpaidLeaveDays: line.unpaidLeaveDays,
-    absentDays: line.absentDays,
+    monthlyGross: normalized.monthlyGross,
+    adjustment: normalized.adjustment,
+    adjustmentReason: normalized.adjustmentReason,
+    reimbursement: normalized.reimbursement,
+    payable: normalized.payable,
+    presentDays: normalized.presentDays,
+    leaveDays: normalized.leaveDays,
+    unpaidLeaveDays: normalized.unpaidLeaveDays,
+    absentDays: normalized.absentDays,
     generatedAt: at,
+    published: true,
+    overtime: normalized.overtime,
+    extras: normalized.extras,
+    arrears: normalized.arrears,
+    pf: normalized.pf,
+    esic: normalized.esic,
+    penalties: normalized.penalties,
+    loan: normalized.loan,
+    otherDeductions: normalized.otherDeductions,
+    totalDeductions: normalized.totalDeductions,
+    grossEarnings: normalized.grossEarnings,
   };
 }
 
@@ -1201,12 +1372,28 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
   if ((patch.attendanceLocationRequired !== undefined || patch.locationRetentionDays !== undefined) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
     return fail(state, "You don't have permission to change these settings.", true);
   }
+  if (
+    patch.payrollStartDay !== undefined ||
+    patch.payrollEndDay !== undefined ||
+    patch.financialYearStartMonth !== undefined ||
+    patch.payrollDailyWageDivisor !== undefined ||
+    patch.payrollRounding !== undefined
+  ) {
+    if (!hasPermission(state, actor, "settings.payroll")) return fail(state, "Only a payroll administrator can change payroll settings.", true);
+  }
   if (patch.payrollStartDay !== undefined || patch.payrollEndDay !== undefined) {
-    if (!hasPermission(state, actor, "settings.payroll")) return fail(state, "Only a payroll administrator can change the payroll period.", true);
     const start = patch.payrollStartDay ?? next.payrollStartDay;
     const end = patch.payrollEndDay ?? next.payrollEndDay;
     if (start < 1 || end < 1 || start > 31 || end > 31 || start > end) return fail(state, "Payroll period days must run from an earlier day to a later day, between 1 and 31.");
   }
+  if (patch.financialYearStartMonth !== undefined) {
+    const month = patch.financialYearStartMonth;
+    if (!Number.isInteger(month) || month < 1 || month > 12) return fail(state, "Financial year start month must be between 1 and 12.");
+  }
+  if (patch.payrollDailyWageDivisor !== undefined && patch.payrollDailyWageDivisor !== null) {
+    if (!(patch.payrollDailyWageDivisor > 0)) return fail(state, "Daily wage divisor must be a positive number, or left blank when not configured.");
+  }
+  if (patch.payrollDailyWageDivisor === null) next.payrollDailyWageDivisor = null;
   if ((patch.orgName || patch.workStart || patch.graceMinutes || patch.weeklyOff || patch.currency) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
     return fail(state, "You don't have permission to change these settings.", true);
   }

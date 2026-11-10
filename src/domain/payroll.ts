@@ -1,6 +1,6 @@
 import { clampDay, eachDate, todayIso } from "./dates";
 import { isNonWorking, leaveTypeOnDate } from "./leave";
-import type { AppState, Employee, OrgSettings, PayrollLine, PayrollRun } from "../types";
+import type { AppState, Employee, OrgSettings, PayrollLine, PayrollRun, PayrollValueSource } from "../types";
 
 export interface PeriodWindow {
   start: string;
@@ -10,6 +10,30 @@ export interface PeriodWindow {
 
 export function daysInMonth(year: number, monthIndex: number): number {
   return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+export function financialYearStartMonth(settings: OrgSettings): number {
+  const month = settings.financialYearStartMonth ?? 4;
+  return Math.min(12, Math.max(1, month));
+}
+
+/** Returns the financial-year label covering an ISO date, e.g. "FY 2026-27". */
+export function financialYearLabel(iso: string, settings: OrgSettings): string {
+  const year = Number(iso.slice(0, 4));
+  const month = Number(iso.slice(5, 7));
+  const startMonth = financialYearStartMonth(settings);
+  const fyStart = month >= startMonth ? year : year - 1;
+  return `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
+}
+
+export function financialYearBounds(fyStartYear: number, settings: OrgSettings): { start: string; end: string } {
+  const startMonth = financialYearStartMonth(settings);
+  const start = `${fyStartYear}-${String(startMonth).padStart(2, "0")}-01`;
+  const endYear = startMonth === 1 ? fyStartYear : fyStartYear + 1;
+  const endMonth = startMonth === 1 ? 12 : startMonth - 1;
+  const last = daysInMonth(endYear, endMonth - 1);
+  const end = `${endYear}-${String(endMonth).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+  return { start, end };
 }
 
 export function periodForMonth(year: number, monthIndex: number, settings: OrgSettings): PeriodWindow {
@@ -37,8 +61,98 @@ export function previousPeriod(settings: OrgSettings, today = new Date()): Perio
   return periodForMonth(date.getFullYear(), date.getMonth(), settings);
 }
 
-function payableOf(line: Pick<PayrollLine, "monthlyGross" | "adjustment" | "reimbursement">): number {
-  return line.monthlyGross + line.adjustment + line.reimbursement;
+export function computePayable(line: Pick<PayrollLine, "monthlyGross" | "adjustment" | "reimbursement" | "overtime" | "extras" | "arrears" | "pf" | "esic" | "penalties" | "loan" | "otherDeductions">): {
+  grossEarnings: number;
+  totalDeductions: number;
+  payable: number;
+} {
+  const overtime = line.overtime ?? 0;
+  const extras = line.extras ?? 0;
+  const arrears = line.arrears ?? 0;
+  const pf = line.pf ?? 0;
+  const esic = line.esic ?? 0;
+  const penalties = line.penalties ?? 0;
+  const loan = line.loan ?? 0;
+  const otherDeductions = line.otherDeductions ?? 0;
+  const grossEarnings = line.monthlyGross + overtime + extras + arrears + line.reimbursement + line.adjustment;
+  const totalDeductions = pf + esic + penalties + loan + otherDeductions;
+  return { grossEarnings, totalDeductions, payable: grossEarnings - totalDeductions };
+}
+
+export function normalizeLine(line: PayrollLine, settings?: OrgSettings): PayrollLine {
+  const overtime = line.overtime ?? 0;
+  const extras = line.extras ?? 0;
+  const arrears = line.arrears ?? 0;
+  const pf = line.pf ?? 0;
+  const esic = line.esic ?? 0;
+  const penalties = line.penalties ?? 0;
+  const loan = line.loan ?? 0;
+  const otherDeductions = line.otherDeductions ?? 0;
+  const halfDays = line.halfDays ?? 0;
+  const fullDays = line.fullDays ?? Math.max(0, line.presentDays - halfDays);
+  const paidLeaveDays = line.paidLeaveDays ?? Math.max(0, line.leaveDays - line.unpaidLeaveDays);
+  const weeklyOffs = line.weeklyOffs ?? 0;
+  const paidDays = line.paidDays ?? fullDays + halfDays * 0.5 + paidLeaveDays;
+  const lopDays = line.lopDays ?? line.unpaidLeaveDays;
+  const divisor = settings?.payrollDailyWageDivisor;
+  const dailyWage = line.dailyWage !== undefined
+    ? line.dailyWage
+    : divisor && divisor > 0
+      ? Math.round((line.monthlyGross / divisor) * 100) / 100
+      : null;
+  const money = computePayable({
+    monthlyGross: line.monthlyGross,
+    adjustment: line.adjustment,
+    reimbursement: line.reimbursement,
+    overtime,
+    extras,
+    arrears,
+    pf,
+    esic,
+    penalties,
+    loan,
+    otherDeductions,
+  });
+  return {
+    ...line,
+    fullDays,
+    halfDays,
+    weeklyOffs,
+    paidLeaveDays,
+    paidDays,
+    lopDays,
+    dailyWage,
+    overtime,
+    extras,
+    arrears,
+    pf,
+    esic,
+    penalties,
+    loan,
+    otherDeductions,
+    grossEarnings: money.grossEarnings,
+    totalDeductions: money.totalDeductions,
+    payable: money.payable,
+    sources: {
+      monthlyGross: "employee",
+      presentDays: "attendance",
+      leaveDays: "attendance",
+      unpaidLeaveDays: "attendance",
+      absentDays: "attendance",
+      reimbursement: "calculated",
+      adjustment: line.adjustment !== 0 ? "manual" : "manual",
+      overtime: overtime !== 0 ? (line.sources?.overtime ?? "manual") : "unconfigured",
+      extras: extras !== 0 ? (line.sources?.extras ?? "manual") : "unconfigured",
+      arrears: arrears !== 0 ? (line.sources?.arrears ?? "manual") : "unconfigured",
+      pf: pf !== 0 ? (line.sources?.pf ?? "manual") : "unconfigured",
+      esic: esic !== 0 ? (line.sources?.esic ?? "manual") : "unconfigured",
+      penalties: penalties !== 0 ? (line.sources?.penalties ?? "manual") : "unconfigured",
+      loan: loan !== 0 ? (line.sources?.loan ?? "manual") : "unconfigured",
+      otherDeductions: otherDeductions !== 0 ? (line.sources?.otherDeductions ?? "manual") : "unconfigured",
+      dailyWage: dailyWage === null ? "unconfigured" : "calculated",
+      ...line.sources,
+    },
+  };
 }
 
 export function buildPayrollLines(state: AppState, start: string, end: string, runId?: string): { lines: PayrollLine[]; warnings: string[] } {
@@ -48,16 +162,17 @@ export function buildPayrollLines(state: AppState, start: string, end: string, r
     warnings.push("This payroll period is still open. Totals can change until the period ends and inputs are refreshed.");
   }
   const people = state.employees.filter((item) => item.status !== "inactive");
-  const lines = people.map((employee) => lineFor(state, employee, start, end, today, runId));
+  const lines = people.map((employee) => normalizeLine(lineFor(state, employee, start, end, today, runId), state.settings));
   if (lines.some((line) => line.lateDays > 0)) {
     warnings.push("Late arrivals are listed for review. No late-penalty rule is configured, so they do not change pay.");
   }
   if (lines.some((line) => line.unpaidLeaveDays > 0)) {
-    warnings.push("Unpaid leave is flagged and does not change gross pay. No unpaid-leave deduction rule is configured.");
+    warnings.push("Unpaid leave / LOP is flagged and does not change gross pay unless a deduction is entered manually or imported.");
   }
   if (lines.some((line) => line.monthlyGross <= 0)) {
-    warnings.push("One or more employees have no monthly gross. Their payable amount stays at reimbursements and adjustments only.");
+    warnings.push("One or more employees have no monthly gross. Their payable amount stays at reimbursements, adjustments, and entered extras only.");
   }
+  warnings.push("PF, ESIC, overtime, penalties, and loan recovery are not auto-calculated. Enter or import those amounts only when your company rules are known.");
   return { lines, warnings };
 }
 
@@ -71,6 +186,8 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
   let absentDays = 0;
   let incompleteDays = 0;
   let remoteDays = 0;
+  let halfDays = 0;
+  let weeklyOffs = 0;
   const exceptions: string[] = [];
 
   records.forEach((record) => {
@@ -85,6 +202,7 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
     }
     if (record.status === "absent") absentDays += 1;
     if (record.status === "incomplete") incompleteDays += 1;
+    if (record.status === "holiday") weeklyOffs += 1;
     if (record.status === "leave") {
       const request = state.leaveRequests.find(
         (item) =>
@@ -94,6 +212,7 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
           item.endDate >= record.date,
       );
       const portion = request && request.partial !== "none" ? 0.5 : 1;
+      if (portion === 0.5) halfDays += 1;
       leaveDays += portion;
       const type = request ? state.settings.leaveTypes.find((item) => item.id === request.typeId) ?? null : leaveTypeOnDate(state, employee.id, record.date);
       if (type && !type.paid) unpaidLeaveDays += portion;
@@ -105,7 +224,11 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
   const pastEnd = end < today ? end : addSafe(today, -1);
   if (pastEnd >= start) {
     eachDate(start, pastEnd).forEach((iso) => {
-      if (isNonWorking(iso, employee.locationId, state.settings, state.holidays)) return;
+      if (isNonWorking(iso, employee.locationId, state.settings, state.holidays)) {
+        const record = records.find((item) => item.date === iso);
+        if (!record) weeklyOffs += 1;
+        return;
+      }
       const record = records.find((item) => item.date === iso);
       if (!record) absentDays += 1;
     });
@@ -113,8 +236,9 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
 
   if (incompleteDays > 0) exceptions.push(`${incompleteDays} missed punch${incompleteDays === 1 ? "" : "es"} in this period.`);
   if (absentDays > 0) exceptions.push(`${absentDays} absent day${absentDays === 1 ? "" : "s"} with no approved leave.`);
-  if (unpaidLeaveDays > 0) exceptions.push(`${unpaidLeaveDays} unpaid leave day${unpaidLeaveDays === 1 ? "" : "s"}. Gross is unchanged.`);
+  if (unpaidLeaveDays > 0) exceptions.push(`${unpaidLeaveDays} unpaid leave day${unpaidLeaveDays === 1 ? "" : "s"}. Gross is unchanged until a deduction is entered.`);
   if (employee.monthlyGross <= 0) exceptions.push("Monthly gross is not set.");
+  if (!employee.bankAccountNumber) exceptions.push("Bank account is not on file.");
 
   const pendingLeave = state.leaveRequests.some(
     (item) => item.employeeId === employee.id && item.status === "pending" && item.startDate <= end && item.endDate >= start,
@@ -142,6 +266,23 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
   const adjustmentReason = existing?.adjustmentReason ?? "";
   const monthlyGross = employee.monthlyGross;
   const round = (value: number) => Math.round(value * 2) / 2;
+  const preserved = {
+    overtime: existing?.overtime ?? 0,
+    extras: existing?.extras ?? 0,
+    arrears: existing?.arrears ?? 0,
+    pf: existing?.pf ?? 0,
+    esic: existing?.esic ?? 0,
+    penalties: existing?.penalties ?? 0,
+    loan: existing?.loan ?? 0,
+    otherDeductions: existing?.otherDeductions ?? 0,
+    sources: existing?.sources,
+  };
+  const money = computePayable({
+    monthlyGross,
+    adjustment,
+    reimbursement,
+    ...preserved,
+  });
   return {
     employeeId: employee.id,
     monthlyGross,
@@ -153,11 +294,16 @@ function lineFor(state: AppState, employee: Employee, start: string, end: string
     absentDays: round(absentDays),
     incompleteDays: round(incompleteDays),
     remoteDays: round(remoteDays),
+    halfDays: round(halfDays),
+    weeklyOffs: round(weeklyOffs),
     reimbursement,
     adjustment,
     adjustmentReason,
     exceptions,
-    payable: payableOf({ monthlyGross, adjustment, reimbursement }),
+    payable: money.payable,
+    ...preserved,
+    grossEarnings: money.grossEarnings,
+    totalDeductions: money.totalDeductions,
   };
 }
 
@@ -189,28 +335,75 @@ export function applyAdjustments(lines: PayrollLine[], previous: PayrollLine[]):
     const prior = previous.find((item) => item.employeeId === line.employeeId);
     const adjustment = prior?.adjustment ?? 0;
     const adjustmentReason = prior?.adjustmentReason ?? "";
-    return {
+    const next = {
       ...line,
       adjustment,
       adjustmentReason,
-      payable: line.monthlyGross + adjustment + line.reimbursement,
+      overtime: prior?.overtime ?? line.overtime ?? 0,
+      extras: prior?.extras ?? line.extras ?? 0,
+      arrears: prior?.arrears ?? line.arrears ?? 0,
+      pf: prior?.pf ?? line.pf ?? 0,
+      esic: prior?.esic ?? line.esic ?? 0,
+      penalties: prior?.penalties ?? line.penalties ?? 0,
+      loan: prior?.loan ?? line.loan ?? 0,
+      otherDeductions: prior?.otherDeductions ?? line.otherDeductions ?? 0,
+      sources: prior?.sources ?? line.sources,
     };
+    const money = computePayable(next);
+    return { ...next, grossEarnings: money.grossEarnings, totalDeductions: money.totalDeductions, payable: money.payable };
   });
 }
 
 export function runTotals(run: Pick<PayrollRun, "lines">) {
   return run.lines.reduce(
-    (totals, line) => {
+    (totals, raw) => {
+      const line = normalizeLine(raw);
       totals.gross += line.monthlyGross;
       totals.adjustments += line.adjustment;
       totals.reimbursements += line.reimbursement;
+      totals.grossEarnings += line.grossEarnings ?? line.payable;
+      totals.deductions += line.totalDeductions ?? 0;
       totals.payable += line.payable;
       totals.exceptions += line.exceptions.length > 0 ? 1 : 0;
       return totals;
     },
-    { employees: run.lines.length, gross: 0, adjustments: 0, reimbursements: 0, payable: 0, exceptions: 0 },
+    { employees: run.lines.length, gross: 0, adjustments: 0, reimbursements: 0, grossEarnings: 0, deductions: 0, payable: 0, exceptions: 0 },
   );
 }
 
+export function maskBankAccount(value: string | undefined | null): string {
+  if (!value) return "Not on file";
+  const digits = value.replace(/\s+/g, "");
+  if (digits.length < 4) return "••••";
+  return `••••${digits.slice(-4)}`;
+}
+
+export function canRevealBank(canManagePayroll: boolean): boolean {
+  return canManagePayroll;
+}
+
+export function statusLabel(status: PayrollRun["status"]): string {
+  if (status === "finalized") return "Approved";
+  if (status === "calculated") return "Calculated";
+  if (status === "verified") return "Verified";
+  if (status === "failed") return "Failed";
+  if (status === "in_review") return "In review";
+  if (status === "paid") return "Paid";
+  return "Draft";
+}
+
+export function isRunLocked(status: PayrollRun["status"]): boolean {
+  return status === "finalized" || status === "paid";
+}
+
+export function sourceLabel(source: PayrollValueSource | undefined): string {
+  if (source === "imported") return "Imported";
+  if (source === "manual") return "Manual";
+  if (source === "attendance") return "Attendance";
+  if (source === "employee") return "Employee record";
+  if (source === "calculated") return "Calculated";
+  return "Not configured";
+}
+
 export const PAYROLL_ASSUMPTION =
-  "Payroll uses the configured monthly gross, plus any manual adjustment and approved expense reimbursements. Tax, provident fund, professional tax, overtime, and other statutory rules are not configured and are not calculated. Unpaid leave is shown for review and does not change gross pay.";
+  "Payroll uses the configured monthly gross, plus any manual adjustment, approved expense reimbursements, and any overtime, extras, arrears, or deductions that were entered or imported. Tax, PF, ESIC, professional tax, overtime rates, and other statutory rules are not auto-calculated. Configure or import those amounts only when your company rules are confirmed.";

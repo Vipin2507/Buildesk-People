@@ -70,8 +70,11 @@ interface StoreValue {
     removePhoto: (employeeId: string) => Promise<Result>;
     createPayrollRun: (year: number, monthIndex: number) => Promise<Result>;
     refreshPayroll: (runId: string) => Promise<Result>;
-    updatePayrollLine: (runId: string, employeeId: string, adjustment: number, reason: string) => Promise<Result>;
-    advancePayroll: (runId: string, status: "in_review" | "finalized" | "paid") => Promise<Result>;
+    calculatePayroll: (runId: string) => Promise<Result>;
+    verifyPayroll: (runId: string, note?: string) => Promise<Result>;
+    updatePayrollLine: (runId: string, employeeId: string, adjustment: number, reason: string, patch?: m.PayrollLinePatch) => Promise<Result>;
+    importPayrollLines: (runId: string, lines: import("../types").PayrollLine[], fileName: string, warningCount: number) => Promise<Result>;
+    advancePayroll: (runId: string, status: "in_review" | "finalized" | "paid", payment?: { reference?: string; note?: string }) => Promise<Result>;
     markNotification: (id: string) => Promise<void>;
     markAllNotifications: () => Promise<void>;
     updateSettings: (patch: Parameters<typeof m.updateSettings>[1]) => Promise<Result>;
@@ -281,8 +284,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setBusy(null);
       return result;
     },
-    updatePayrollLine: (runId, employeeId, adjustment, reason) => run("updatePayrollLine", { runId, employeeId, adjustment, reason }),
-    advancePayroll: (runId, status) => run("advancePayroll", { runId, status }),
+    calculatePayroll: async (runId) => {
+      setBusy("payroll");
+      const result = await run("calculatePayrollRun", { runId });
+      setBusy(null);
+      return result;
+    },
+    verifyPayroll: (runId, note = "") => run("verifyPayrollRun", { runId, note }),
+    updatePayrollLine: (runId, employeeId, adjustment, reason, patch) => run("updatePayrollLine", { runId, employeeId, adjustment, reason, patch }),
+    importPayrollLines: (runId, lines, fileName, warningCount) => run("importPayrollLines", { runId, lines, fileName, warningCount }),
+    advancePayroll: (runId, status, payment) => run("advancePayroll", { runId, status, payment }),
     markNotification: async (id) => { await run("markNotification", { id }); },
     markAllNotifications: async () => { await run("markAllNotifications"); },
     updateSettings: (patch) => run("updateSettings", patch),
