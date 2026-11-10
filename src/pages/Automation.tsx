@@ -324,33 +324,37 @@ function Rules() {
   });
 
   return (
-    <section className="panel">
-      <div className="spread">
+    <section className="panel automation-rules">
+      <div className="panel-toolbar">
         <h2>Automation rules</h2>
-        <Button
-          onClick={() =>
-            setEditor({
-              name: "",
-              trigger: "leave-submitted",
-              channel: "email",
-              isActive: false,
-              templateSubject: "",
-              templateBody: "",
-              description: "",
-            })
-          }
-        >
-          New rule
-        </Button>
+        <div className="panel-toolbar-actions">
+          <Button
+            size="sm"
+            onClick={() =>
+              setEditor({
+                name: "",
+                trigger: "leave-submitted",
+                channel: "email",
+                isActive: false,
+                templateSubject: "",
+                templateBody: "",
+                description: "",
+              })
+            }
+          >
+            New rule
+          </Button>
+        </div>
       </div>
       <DataTable
         caption="Automation rules"
+        className="automation-rules-table"
         rows={sorted}
         rowKey={(row) => row.id}
         emptyTitle="No rules"
         emptyBody="Create a rule for an HR event and channel."
         columns={[
-          { key: "name", header: "Rule", render: (row) => (<span><strong>{row.name}</strong><span className="muted" style={{ display: "block" }}>{row.description || TRIGGER_LABELS[row.trigger]}</span></span>) },
+          { key: "name", header: "Rule", render: (row) => (<span className="rule-name"><strong>{row.name}</strong><span className="muted">{row.description || TRIGGER_LABELS[row.trigger]}</span></span>) },
           { key: "trigger", header: "Trigger", render: (row) => TRIGGER_LABELS[row.trigger] },
           { key: "channel", header: "Channel", render: (row) => <StatusBadge value={row.channel} /> },
           { key: "active", header: "Status", render: (row) => (row.isActive ? <StatusBadge value="active" /> : <StatusBadge value="inactive" />) },
@@ -358,7 +362,7 @@ function Rules() {
             key: "actions",
             header: "Actions",
             render: (row) => (
-              <div className="actions">
+              <div className="actions rule-actions">
                 <Button size="sm" variant="secondary" onClick={() => setEditor(row)}>Edit</Button>
                 <Button size="sm" variant="secondary" onClick={() => openRuleTest(row)}>Send test</Button>
                 <Button size="sm" variant="secondary" onClick={() => actions.setAutomationRuleActive(row.id, !row.isActive)}>
@@ -541,33 +545,35 @@ function Logs() {
   const rows = config.logs.filter((item) => channel === "all" || item.channel === channel);
 
   return (
-    <section className="panel">
-      <div className="spread">
+    <section className="panel automation-logs">
+      <div className="panel-toolbar">
         <h2>Delivery logs</h2>
-        <div className="actions">
-          <Field label="Channel">
-            <select value={channel} onChange={(event) => setChannel(event.target.value)}>
+        <div className="panel-toolbar-actions">
+          <label className="inline-control">
+            <span>Channel</span>
+            <select value={channel} onChange={(event) => setChannel(event.target.value)} aria-label="Filter by channel">
               <option value="all">All</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="email">Email</option>
             </select>
-          </Field>
-          <Button variant="secondary" onClick={() => actions.clearAutomationLogs()}>Clear logs</Button>
+          </label>
+          <Button variant="secondary" size="sm" onClick={() => actions.clearAutomationLogs()}>Clear logs</Button>
         </div>
       </div>
       <Banner tone="info">HTTP 2xx means the handoff to WAHA or n8n succeeded. End-user delivery can still fail later at WhatsApp or the mail provider.</Banner>
       <DataTable
         caption="Automation logs"
+        className="automation-logs-table"
         rows={rows}
         rowKey={(row) => row.id}
         emptyTitle="No logs"
         emptyBody="Attempts appear after events fire or you send a test."
         columns={[
-          { key: "when", header: "When", render: (row) => formatDateTime(row.attemptedAt) },
+          { key: "when", header: "When", render: (row) => <span className="log-when">{formatDateTime(row.attemptedAt)}</span> },
           { key: "trigger", header: "Trigger", render: (row) => TRIGGER_LABELS[row.trigger] },
           { key: "channel", header: "Channel", render: (row) => <StatusBadge value={row.channel} /> },
           { key: "status", header: "Status", render: (row) => <StatusBadge value={row.status} /> },
-          { key: "summary", header: "Summary", render: (row) => row.errorMessage || row.responseSummary || "—" },
+          { key: "summary", header: "Summary", render: (row) => <span className="log-summary">{row.errorMessage || row.responseSummary || "—"}</span> },
         ]}
       />
     </section>
