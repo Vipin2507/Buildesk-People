@@ -518,9 +518,31 @@ export function saveEvent(state: AppState, input: CompanyEvent): Outcome {
   const actor = requireUser(state, "leave.manage");
   if (!isEmployee(actor)) return actor;
   if (input.title.trim().length < 3 || !input.date) return fail(state, "Add an event title and date.");
-  const event = { ...input, id: input.id || uid("evt"), title: input.title.trim(), description: input.description.trim() };
+  const endDate = input.endDate && input.endDate.trim() ? input.endDate.trim() : input.date;
+  if (endDate < input.date) return fail(state, "End date must be on or after the start date.");
+  const title = input.title.trim();
+  const description = input.description.trim();
+  const kind = input.kind === "festival" ? "festival" : "event";
+  const duplicate = state.events.find((item) =>
+    item.id !== input.id
+    && item.title.toLowerCase() === title.toLowerCase()
+    && item.date === input.date
+    && (item.endDate || item.date) === endDate
+    && item.locationId === input.locationId
+    && item.kind === kind,
+  );
+  if (duplicate) return fail(state, "An event with the same title, dates, location, and type already exists.");
+  const event: CompanyEvent = {
+    id: input.id || uid("evt"),
+    title,
+    date: input.date,
+    endDate: endDate === input.date ? undefined : endDate,
+    locationId: input.locationId,
+    description,
+    kind,
+  };
   const events = state.events.some((item) => item.id === event.id) ? state.events.map((item) => (item.id === event.id ? event : item)) : [...state.events, event];
-  return ok(pushAudit({ ...state, events }, actor.id, "settings", `Saved the event ${event.title}.`), "Event saved.");
+  return ok(pushAudit({ ...state, events }, actor.id, "settings", `Saved the ${kind === "festival" ? "festival" : "event"} ${event.title}.`), "Event saved.");
 }
 
 export function deleteEvent(state: AppState, id: string): Outcome {

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banner, Button, DataTable, Field, NoAccess, PageHeader, Tabs } from "../components/ui";
+import { Banner, Button, DataTable, Field, NoAccess, PageHeader, Tabs, TimePicker } from "../components/ui";
 import { PERMISSIONS, ROLES } from "../lib/access";
 import { currentPeriod } from "../domain/payroll";
 import { PAYROLL_ASSUMPTION } from "../domain/payroll";
@@ -64,7 +64,7 @@ function ScheduleForm() {
   const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
     <section className="panel narrow">
-      <Field label="Workday starts"><input type="time" value={workStart} onChange={(event) => setStart(event.target.value)} /></Field>
+      <Field label="Workday starts"><TimePicker value={workStart} onChange={setStart} /></Field>
       <Field label="Grace minutes"><input type="number" min={0} value={grace} onChange={(event) => setGrace(Number(event.target.value))} /></Field>
       <p>Weekly off</p>
       <div className="actions">

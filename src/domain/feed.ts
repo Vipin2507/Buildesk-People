@@ -41,13 +41,15 @@ export function upcomingFeed(state: AppState, viewer: Employee, withinDays = 28)
   });
 
   state.events.forEach((event) => {
-    if (event.date < today || event.date > end) return;
+    const eventEnd = event.endDate && event.endDate >= event.date ? event.endDate : event.date;
+    if (eventEnd < today || event.date > end) return;
     const applies = event.locationId === "all" || event.locationId === viewer.locationId;
     if (!applies && !companyWide) return;
     const location = event.locationId === "all" ? "All offices" : state.locations.find((item) => item.id === event.locationId)?.name ?? "One office";
+    const startInWindow = event.date < today ? today : event.date;
     items.push({
       id: event.id,
-      date: event.date,
+      date: startInWindow,
       title: event.title,
       detail: `${event.kind === "festival" ? "Festival" : "Event"} · ${location}`,
       kind: "event",

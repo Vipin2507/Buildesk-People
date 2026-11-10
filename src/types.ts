@@ -282,9 +282,12 @@ export interface CompanyEvent {
   id: string;
   title: string;
   date: string;
+  /** Inclusive end date for multi-day events; omit or same as date for single-day. */
+  endDate?: string;
   locationId: string | "all";
   description: string;
   kind: "event" | "festival";
+  /** All company events are all-day in the current model (no timed slots). */
 }
 
 export interface ExpenseClaim {

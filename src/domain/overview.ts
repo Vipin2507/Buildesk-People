@@ -440,7 +440,8 @@ export function dayBrief(state: AppState, user: Employee, date: string): DayLine
     lines.push({ id: holiday.id, title: holiday.name, detail: `Holiday · ${location}`, href: "/leave?tab=holidays" });
   });
   state.events.forEach((event) => {
-    if (event.date !== date) return;
+    const eventEnd = event.endDate && event.endDate >= event.date ? event.endDate : event.date;
+    if (date < event.date || date > eventEnd) return;
     const applies = event.locationId === "all" || event.locationId === user.locationId;
     if (!applies && !companyWide) return;
     const location = event.locationId === "all" ? "All offices" : state.locations.find((item) => item.id === event.locationId)?.name ?? "One office";

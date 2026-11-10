@@ -4,7 +4,7 @@ import { fullName } from "../lib/format";
 import type { EmployeeDraft } from "../store/mutations";
 import { useApp } from "../store/store";
 import type { Employee, EmploymentStatus, EmploymentType, Role } from "../types";
-import { Banner, Button, Field } from "./ui";
+import { Banner, Button, DatePicker, Field } from "./ui";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -134,7 +134,7 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
             </select>
           </Field>
           <Field label="Joining date" required error={errors.joiningDate}>
-            <input data-field="joiningDate" type="date" aria-required="true" aria-invalid={Boolean(errors.joiningDate)} value={draft.joiningDate} onChange={(event) => set({ joiningDate: event.target.value })} />
+            <DatePicker data-field="joiningDate" required aria-required aria-invalid={Boolean(errors.joiningDate)} value={draft.joiningDate} onChange={(joiningDate) => set({ joiningDate })} />
           </Field>
           {can("settings.roles") && (
             <Field className="span-2" label="Directory role" hint="This label is on the employee record. Login access is a separate account in User Management.">
@@ -153,7 +153,7 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
         <legend>Personal details</legend>
         <div className="form-grid">
           <Field label="Date of birth" required error={errors.dateOfBirth} hint="It can stay off the company birthday feed.">
-            <input data-field="dateOfBirth" type="date" autoComplete="bday" aria-required="true" aria-invalid={Boolean(errors.dateOfBirth)} value={draft.dateOfBirth} onChange={(event) => set({ dateOfBirth: event.target.value })} />
+            <DatePicker data-field="dateOfBirth" required aria-required aria-invalid={Boolean(errors.dateOfBirth)} value={draft.dateOfBirth} onChange={(dateOfBirth) => set({ dateOfBirth })} max={todayIso()} />
           </Field>
           <Field label="Phone">
             <input type="tel" autoComplete="tel" inputMode="tel" value={draft.phone} onChange={(event) => set({ phone: event.target.value })} />

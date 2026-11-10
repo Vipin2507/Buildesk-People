@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banner, Button, DataTable, PageHeader } from "../components/ui";
+import { Banner, Button, DataTable, DatePicker, PageHeader } from "../components/ui";
 import { addDays, todayIso } from "../domain/dates";
 import { downloadCsv } from "../lib/download";
 import { fullName, labelFor } from "../lib/format";
@@ -71,8 +71,8 @@ export function Reports() {
               {options.filter((item) => item.show).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
-          <label className="field">From<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-          <label className="field">To<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+          <label className="field">From<DatePicker value={from} onChange={setFrom} /></label>
+          <label className="field">To<DatePicker value={to} onChange={setTo} min={from || undefined} /></label>
           <label className="field">Department
             <select value={department} onChange={(event) => setDepartment(event.target.value)}>
               <option value="all">All departments</option>

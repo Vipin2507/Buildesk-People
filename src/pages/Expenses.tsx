@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banner, Button, DecisionDialog, EmptyState, Field, PageHeader, StatusBadge, Tabs } from "../components/ui";
+import { Banner, Button, DatePicker, DecisionDialog, EmptyState, Field, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { canReview } from "../lib/access";
 import { addDays, todayIso } from "../domain/dates";
 import { formatDate, formatMoney, fullName } from "../lib/format";
@@ -63,7 +63,7 @@ function MyClaims() {
             </select>
           </Field>
           <Field label={`Amount (${state.settings.currency})`}><input type="number" min={1} value={amount} onChange={(event) => setAmount(event.target.value)} /></Field>
-          <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
+          <Field label="Date"><DatePicker value={date} onChange={setDate} /></Field>
           <Field label="Description"><textarea value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
           <Field label="Receipt" hint="The file name is stored. The file itself is not uploaded.">
             <input type="file" accept="image/*,.pdf" onChange={(event) => setReceipt(event.target.files?.[0]?.name ?? "")} />
@@ -210,14 +210,14 @@ function Insurance() {
           <Field label="Plan"><input value={form.plan} onChange={(event) => setDraft({ ...form, plan: event.target.value })} /></Field>
           <Field label="Policy number"><input value={form.policyNumber} onChange={(event) => setDraft({ ...form, policyNumber: event.target.value })} /></Field>
           <Field label="Coverage"><textarea value={form.coverage} onChange={(event) => setDraft({ ...form, coverage: event.target.value })} /></Field>
-          <Field label="Renewal date"><input type="date" value={form.renewalDate} onChange={(event) => setDraft({ ...form, renewalDate: event.target.value })} /></Field>
+          <Field label="Renewal date"><DatePicker value={form.renewalDate} onChange={(renewalDate) => setDraft({ ...form, renewalDate })} /></Field>
           <Field label="Notes"><textarea value={form.notes} onChange={(event) => setDraft({ ...form, notes: event.target.value })} /></Field>
           <h3>Dependents</h3>
           {form.dependents.map((item, index) => (
             <div key={index} className="form-grid">
               <Field label="Name"><input value={item.name} onChange={(event) => updateDependent(form, index, { name: event.target.value }, setDraft)} /></Field>
               <Field label="Relationship"><input value={item.relationship} onChange={(event) => updateDependent(form, index, { relationship: event.target.value }, setDraft)} /></Field>
-              <Field label="Date of birth"><input type="date" value={item.dateOfBirth} onChange={(event) => updateDependent(form, index, { dateOfBirth: event.target.value }, setDraft)} /></Field>
+              <Field label="Date of birth"><DatePicker value={item.dateOfBirth} onChange={(dateOfBirth) => updateDependent(form, index, { dateOfBirth }, setDraft)} max={todayIso()} /></Field>
             </div>
           ))}
           <div className="actions">

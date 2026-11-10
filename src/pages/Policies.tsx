@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { audienceLabel, policyApplies, publishedVersion } from "../domain/policies";
-import { Banner, Button, DecisionDialog, EmptyState, Field, Modal, PageHeader, StatusBadge } from "../components/ui";
+import { Banner, Button, DatePicker, DecisionDialog, EmptyState, Field, Modal, PageHeader, StatusBadge } from "../components/ui";
 import { downloadText } from "../lib/download";
 import { formatDate, formatDateTime } from "../lib/format";
 import { useApp } from "../store/store";
@@ -186,7 +186,7 @@ function PolicyEditor({ policy, onDone }: { policy?: Policy; onDone: () => void 
       <div className="form-grid">
         <Field label="Category"><input value={category} onChange={(event) => setCategory(event.target.value)} /></Field>
         <Field label="Version"><input value={version} onChange={(event) => setVersion(event.target.value)} /></Field>
-        <Field label="Effective date"><input type="date" value={effectiveDate} onChange={(event) => setEffective(event.target.value)} /></Field>
+        <Field label="Effective date"><DatePicker value={effectiveDate} onChange={setEffective} /></Field>
         <Field label="Applies to">
           <select value={audienceKind} onChange={(event) => setKind(event.target.value as PolicyAudience["kind"])}>
             <option value="all">All employees</option>

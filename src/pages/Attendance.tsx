@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Check, Clock, Palmtree, X } from "lucide-react";
 import { ClockCard } from "../components/clock";
 import { LocationView } from "../components/location-view";
-import { Banner, Button, DataTable, DecisionDialog, Field, Modal, PageHeader, Pager, PersonLink, StatusBadge, Tabs, Timeline, usePage } from "../components/ui";
+import { Banner, Button, DataTable, DatePicker, DecisionDialog, Field, Modal, PageHeader, Pager, PersonLink, StatusBadge, Tabs, Timeline, TimePicker, usePage } from "../components/ui";
 import { dayFlags, recordOn, type DayFlags } from "../domain/attendance";
 import { punchLocationText } from "../domain/location";
 import { addDays, todayIso } from "../domain/dates";
@@ -81,8 +81,8 @@ function Mine() {
         {notice && <Banner tone="success">{notice}</Banner>}
         {rangeInvalid && <Banner tone="error">Choose a start date that is on or before the end date.</Banner>}
         <div className="filters">
-          <label className="field">From<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-          <label className="field">To<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+          <label className="field">From<DatePicker value={from} onChange={setFrom} /></label>
+          <label className="field">To<DatePicker value={to} onChange={setTo} min={from || undefined} /></label>
           <label className="field">Status
             <select value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="all">All</option>
@@ -178,14 +178,14 @@ function CorrectionDialog({ open, onClose, onSubmitted }: { open: boolean; onClo
       {step === "edit" ? (
         <>
           <Field label="Date" error={fields.date}>
-            <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            <DatePicker value={date} onChange={setDate} aria-invalid={Boolean(fields.date)} />
           </Field>
           <div className="form-grid">
             <Field label="Requested clock-in" error={fields.in}>
-              <input type="time" value={requestedIn} onChange={(event) => setIn(event.target.value)} />
+              <TimePicker value={requestedIn} onChange={setIn} aria-invalid={Boolean(fields.in)} />
             </Field>
             <Field label="Requested clock-out" error={fields.out}>
-              <input type="time" value={requestedOut} onChange={(event) => setOut(event.target.value)} />
+              <TimePicker value={requestedOut} onChange={setOut} sameAs={requestedIn} aria-invalid={Boolean(fields.out)} />
             </Field>
           </div>
           <Field label="Reason" error={fields.reason}>
@@ -366,8 +366,8 @@ function Corrections() {
           <>
             <p className="muted">You can adjust the times before approving. The original request stays on the audit trail.</p>
             <div className="form-grid">
-              <Field label="Clock in"><input type="time" value={inTime} onChange={(event) => setIn(event.target.value)} /></Field>
-              <Field label="Clock out"><input type="time" value={outTime} onChange={(event) => setOut(event.target.value)} /></Field>
+              <Field label="Clock in"><TimePicker value={inTime} onChange={setIn} /></Field>
+              <Field label="Clock out"><TimePicker value={outTime} onChange={setOut} sameAs={inTime} /></Field>
             </div>
           </>
         )}
@@ -524,11 +524,11 @@ function DayBoard({ mode }: { mode: "team" | "company" }) {
       {rangeInvalid && <Banner tone="error">Choose a start date that is on or before the end date.</Banner>}
       <div className="filters">
         {mode === "team" ? (
-          <label className="field">Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <label className="field">Date<DatePicker value={date} onChange={setDate} /></label>
         ) : (
           <>
-            <label className="field">From<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-            <label className="field">To<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+            <label className="field">From<DatePicker value={from} onChange={setFrom} /></label>
+            <label className="field">To<DatePicker value={to} onChange={setTo} min={from || undefined} /></label>
           </>
         )}
         <label className="field">Employee<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name" /></label>
