@@ -93,7 +93,13 @@ interface StoreValue {
     setAutomationRuleActive: (id: string, isActive: boolean) => Promise<Result>;
     clearAutomationLogs: () => Promise<Result>;
     checkAutomationHealth: (channel: "whatsapp" | "email") => Promise<{ ok: boolean; message: string }>;
-    testAutomationSend: (input: { channel: "whatsapp" | "email"; message?: string; email?: string; phone?: string }) => Promise<{ ok: boolean; message: string }>;
+    testAutomationSend: (input: {
+      channel?: "whatsapp" | "email";
+      ruleId?: string;
+      message?: string;
+      email?: string;
+      phone?: string;
+    }) => Promise<{ ok: boolean; message: string }>;
   };
 }
 

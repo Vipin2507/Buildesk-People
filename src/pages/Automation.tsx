@@ -8,10 +8,12 @@ import {
   emailEndpointReady,
   markersToPreviewHtml,
   normalizeAutomationConfig,
+  renderAutomationTemplate,
+  sampleAutomationVars,
   wahaReady,
   wrapSelection,
 } from "../domain/automation";
-import { formatDateTime } from "../lib/format";
+import { formatDateTime, fullName } from "../lib/format";
 import { useTab } from "../lib/useTab";
 import { useApp } from "../store/store";
 import type { AutomationEndpoint, AutomationRule, AutomationTrigger, WahaConfig } from "../types/automation";
@@ -296,9 +298,12 @@ function Channels() {
 }
 
 function Rules() {
-  const { actions } = useApp();
+  const { user, state, actions } = useApp();
   const config = useConfig();
   const [editor, setEditor] = useState<Partial<AutomationRule> | null>(null);
+  const [testRule, setTestRule] = useState<AutomationRule | null>(null);
+  const [testTarget, setTestTarget] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
   const [error, setError] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
@@ -306,6 +311,17 @@ function Rules() {
     () => [...config.rules].sort((a, b) => a.name.localeCompare(b.name)),
     [config.rules],
   );
+
+  const openRuleTest = (rule: AutomationRule) => {
+    setTestRule(rule);
+    setTestTarget(rule.channel === "whatsapp" ? (user?.phone ?? "") : (user?.email ?? ""));
+  };
+
+  const sampleVars = sampleAutomationVars({
+    employeeName: user ? fullName(user) : "Test employee",
+    companyName: state.settings.orgName,
+    mobile: user?.phone ?? "",
+  });
 
   return (
     <section className="panel">
@@ -344,6 +360,7 @@ function Rules() {
             render: (row) => (
               <div className="actions">
                 <Button size="sm" variant="secondary" onClick={() => setEditor(row)}>Edit</Button>
+                <Button size="sm" variant="secondary" onClick={() => openRuleTest(row)}>Send test</Button>
                 <Button size="sm" variant="secondary" onClick={() => actions.setAutomationRuleActive(row.id, !row.isActive)}>
                   {row.isActive ? "Pause" : "Activate"}
                 </Button>
@@ -437,6 +454,17 @@ function Rules() {
                   Delete
                 </Button>
               )}
+              {editor.id && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const saved = config.rules.find((item) => item.id === editor.id);
+                    if (saved) openRuleTest(saved);
+                  }}
+                >
+                  Send test
+                </Button>
+              )}
               <Button variant="secondary" onClick={() => setEditor(null)}>Cancel</Button>
               <Button
                 onClick={async () => {
@@ -457,6 +485,46 @@ function Rules() {
                 }}
               >
                 Save rule
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal open={Boolean(testRule)} title={testRule ? `Send test · ${testRule.name}` : "Send test"} onClose={() => setTestRule(null)}>
+        {testRule && (
+          <>
+            <Banner tone="info">
+              Sends this rule’s rendered template on {testRule.channel === "whatsapp" ? "WhatsApp (WAHA)" : "email (n8n)"} using sample variables. The rule does not need to be active.
+            </Banner>
+            <p className="muted">{TRIGGER_LABELS[testRule.trigger]} · {testRule.channel}</p>
+            {testRule.channel === "email" && (
+              <p><strong>Subject:</strong> {renderAutomationTemplate(testRule.templateSubject || testRule.name, sampleVars)}</p>
+            )}
+            <div className="automation-preview" dangerouslySetInnerHTML={{ __html: markersToPreviewHtml(renderAutomationTemplate(testRule.templateBody, sampleVars)) }} />
+            <Field label={testRule.channel === "whatsapp" ? "Mobile" : "Recipient email"} required>
+              <input
+                value={testTarget}
+                onChange={(event) => setTestTarget(event.target.value)}
+                placeholder={testRule.channel === "whatsapp" ? "9876543210" : "you@company.com"}
+              />
+            </Field>
+            <div className="actions">
+              <Button variant="secondary" onClick={() => setTestRule(null)}>Cancel</Button>
+              <Button
+                disabled={testBusy || !testTarget.trim()}
+                onClick={async () => {
+                  setTestBusy(true);
+                  const result = await actions.testAutomationSend({
+                    ruleId: testRule.id,
+                    phone: testRule.channel === "whatsapp" ? testTarget.trim() : undefined,
+                    email: testRule.channel === "email" ? testTarget.trim() : undefined,
+                  });
+                  setTestBusy(false);
+                  if (result.ok) setTestRule(null);
+                }}
+              >
+                {testBusy ? "Sending…" : "Send test"}
               </Button>
             </div>
           </>

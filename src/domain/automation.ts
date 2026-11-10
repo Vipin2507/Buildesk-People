@@ -58,6 +58,35 @@ export function renderAutomationTemplate(template: string, vars: Record<string, 
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key]?.trim() ?? "");
 }
 
+/** Demo values for “Send test” on a rule. Clearly labeled so operators know they are samples. */
+export function sampleAutomationVars(input: {
+  employeeName: string;
+  companyName: string;
+  mobile?: string;
+}): Record<string, string> {
+  return {
+    employeeName: input.employeeName || "Test employee",
+    managerName: "Test manager",
+    companyName: input.companyName || "Buildesk People",
+    startDate: "2026-11-12",
+    endDate: "2026-11-14",
+    leaveType: "Casual leave",
+    comment: "Sample review note (test).",
+    ticketNumber: "TCK-TEST",
+    subject: "Sample ticket subject",
+    priority: "medium",
+    ticketUrl: "/tickets/test",
+    replyPreview: "This is a sample team reply for testing.",
+    amount: "₹1,000.00",
+    category: "Travel",
+    periodLabel: "1 Nov 2026 – 30 Nov 2026",
+    netPayable: "₹50,000.00",
+    policyTitle: "Sample HR policy",
+    assetName: "Laptop (test)",
+    mobile: input.mobile ?? "",
+  };
+}
+
 /** Normalize Indian mobiles toward WAHA chat ids when possible. */
 export function normalizeIndiaPhone(phone: string | undefined | null): string | null {
   if (!phone) return null;

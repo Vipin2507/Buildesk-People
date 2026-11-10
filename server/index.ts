@@ -17,8 +17,19 @@ import { createSession, deleteSession, readSession, readWorkspace, writeWorkspac
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
 import { presentWorkspace } from "./present.ts";
-import { appendAutomationLog, buildN8nWebhookUrl, emailEndpointReady, normalizeAutomationConfig, phoneToWahaChatId, sanitizeLogPayload, wahaReady } from "../src/domain/automation.ts";
+import {
+  appendAutomationLog,
+  buildN8nWebhookUrl,
+  emailEndpointReady,
+  normalizeAutomationConfig,
+  phoneToWahaChatId,
+  renderAutomationTemplate,
+  sampleAutomationVars,
+  sanitizeLogPayload,
+  wahaReady,
+} from "../src/domain/automation.ts";
 import { nowIso, uid } from "../src/domain/dates.ts";
+import { fullName } from "../src/lib/format.ts";
 
 const PORT = Number(process.env.PORT ?? process.env.BUILDESK_API_PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -527,15 +538,37 @@ const server = createServer(async (request, response) => {
         return;
       }
       const body = await readBody(request);
-      const channel = body.channel === "email" ? "email" : "whatsapp";
-      const message = typeof body.message === "string" && body.message.trim() ? body.message.trim() : "Buildesk People automation test message.";
       let config = normalizeAutomationConfig(state.automation);
+      const ruleId = typeof body.ruleId === "string" ? body.ruleId : "";
+      const rule = ruleId ? config.rules.find((item) => item.id === ruleId) : undefined;
+      if (ruleId && !rule) {
+        send(response, 200, { ok: false, message: "That automation rule was not found.", state: presentWorkspace(state, accountId) });
+        return;
+      }
+      const channel = rule ? rule.channel : body.channel === "email" ? "email" : "whatsapp";
+      const phone = typeof body.phone === "string" && body.phone.trim() ? body.phone.trim() : viewer.phone;
+      const email = typeof body.email === "string" && body.email.trim() ? body.email.trim() : viewer.email;
+      const sampleVars = sampleAutomationVars({
+        employeeName: fullName(viewer),
+        companyName: state.settings.orgName,
+        mobile: phone,
+      });
+      const message = rule
+        ? renderAutomationTemplate(rule.templateBody, sampleVars)
+        : typeof body.message === "string" && body.message.trim()
+          ? body.message.trim()
+          : "Buildesk People automation test message.";
+      const subject = rule
+        ? renderAutomationTemplate(rule.templateSubject || rule.name, sampleVars)
+        : "Buildesk People automation test";
+      const trigger = rule ? rule.trigger : "manual-test";
+
       if (channel === "whatsapp") {
         if (!wahaReady(config.waha)) {
           send(response, 200, { ok: false, message: "Enable WAHA and save settings before testing WhatsApp.", state: presentWorkspace(state, accountId) });
           return;
         }
-        const chatId = phoneToWahaChatId(typeof body.phone === "string" ? body.phone : viewer.phone);
+        const chatId = phoneToWahaChatId(phone);
         if (!chatId) {
           send(response, 200, { ok: false, message: "Invalid mobile for WhatsApp.", state: presentWorkspace(state, accountId) });
           return;
@@ -544,20 +577,24 @@ const server = createServer(async (request, response) => {
         config = appendAutomationLog(config, {
           id: uid("alog"),
           channel: "whatsapp",
-          trigger: "manual-test",
+          trigger,
           status: result.ok ? "success" : "failed",
-          requestPayload: sanitizeLogPayload({ chatId, text: message }),
+          requestPayload: sanitizeLogPayload({ chatId, text: message, ruleId: rule?.id, test: true }),
           responseSummary: `HTTP ${result.status}`,
           errorMessage: result.ok ? undefined : result.text.slice(0, 280),
           attemptedAt: nowIso(),
           retryCount: 0,
+          ruleId: rule?.id,
           employeeId: viewer.id,
         });
-        const saved = { ...state, automation: config, currentUserId: null };
-        writeWorkspace(saved);
+        writeWorkspace({ ...state, automation: config, currentUserId: null });
         send(response, 200, {
           ok: result.ok,
-          message: result.ok ? "WhatsApp test handed off to WAHA." : result.text.slice(0, 180),
+          message: result.ok
+            ? rule
+              ? `WhatsApp test for “${rule.name}” handed off to WAHA.`
+              : "WhatsApp test handed off to WAHA."
+            : result.text.slice(0, 180),
           state: presentWorkspace({ ...state, automation: config }, accountId),
         });
         return;
@@ -568,32 +605,41 @@ const server = createServer(async (request, response) => {
       }
       const emailEp = config.endpoints.find((item) => item.channel === "email" && item.isEnabled && !item.webhookUrl.includes("health"));
       const url = buildN8nWebhookUrl(config.settings.n8nWebhookBase, emailEp?.webhookUrl ?? "buildesk-people");
-      const recipient = typeof body.email === "string" ? body.email : viewer.email;
       const result = await postN8nWebhook(url, {
-        recipientEmail: recipient,
-        emailSubject: "Buildesk People automation test",
+        recipientEmail: email,
+        emailSubject: subject,
         messageBody: message,
+        emailCc: [config.settings.emailCc, rule?.emailCc].filter(Boolean).join(", "),
         emailFromAddress: config.settings.emailFromAddress,
         emailFromName: config.settings.emailFromName,
+        trigger,
+        ruleId: rule?.id,
+        test: true,
         delayHours: 0,
         waitAmount: 0,
+        ...sampleVars,
       });
       config = appendAutomationLog(config, {
         id: uid("alog"),
         channel: "email",
-        trigger: "manual-test",
+        trigger,
         status: result.ok ? "success" : "failed",
-        requestPayload: sanitizeLogPayload({ recipientEmail: recipient, messageBody: message }),
+        requestPayload: sanitizeLogPayload({ recipientEmail: email, emailSubject: subject, messageBody: message, ruleId: rule?.id, test: true }),
         responseSummary: `HTTP ${result.status}`,
         errorMessage: result.ok ? undefined : result.text.slice(0, 280),
         attemptedAt: nowIso(),
         retryCount: 0,
+        ruleId: rule?.id,
         employeeId: viewer.id,
       });
       writeWorkspace({ ...state, automation: config, currentUserId: null });
       send(response, 200, {
         ok: result.ok,
-        message: result.ok ? "Email test posted to n8n." : result.text.slice(0, 180),
+        message: result.ok
+          ? rule
+            ? `Email test for “${rule.name}” posted to n8n.`
+            : "Email test posted to n8n."
+          : result.text.slice(0, 180),
         state: presentWorkspace({ ...state, automation: config }, accountId),
       });
       return;

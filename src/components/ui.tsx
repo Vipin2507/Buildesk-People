@@ -258,13 +258,17 @@ export function Timeline({ items }: { items: { id: string; title: string; meta: 
 
 export function Modal({ open, title, onClose, className, children }: { open: boolean; title: string; onClose: () => void; className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
     const node = ref.current;
+    // Focus the dialog only when it opens. Re-running on every onClose identity
+    // change (inline lambdas) steals focus from inputs after the first keystroke.
     node?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
       if (event.key !== "Tab" || !node) return;
       const items = [...node.querySelectorAll<HTMLElement>("button, a, input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter((item) => !item.hasAttribute("disabled"));
       if (items.length === 0) return;
@@ -286,7 +290,7 @@ export function Modal({ open, title, onClose, className, children }: { open: boo
       document.body.style.overflow = overflow;
       previous?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="modal-back" onMouseDown={onClose}>
