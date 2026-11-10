@@ -1,4 +1,6 @@
 import { hasPermission, canManageTicket, canSeeCompensation, canSeeDocument, canSeeSensitiveContact } from "../src/lib/access.ts";
+import { defaultAutomationConfig } from "../src/data/automationDefaults.ts";
+import { normalizeAutomationConfig } from "../src/domain/automation.ts";
 import { policyApplies } from "../src/domain/policies.ts";
 import { sessionEmployee } from "../src/lib/session.ts";
 import type { AppState, Employee, PayrollRun } from "../src/types.ts";
@@ -97,5 +99,8 @@ export function presentWorkspace(source: AppState, accountId: string): AppState 
           return true;
         })
       : [],
+    automation: hasPermission(state, viewer, "automation.manage")
+      ? normalizeAutomationConfig(state.automation)
+      : { ...defaultAutomationConfig(), settings: { ...defaultAutomationConfig().settings, automationsEnabled: false }, waha: { ...defaultAutomationConfig().waha, apiKey: "" }, rules: [], logs: [] },
   };
 }

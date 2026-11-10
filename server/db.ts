@@ -6,6 +6,7 @@ import { grantHrAdminAccess } from "../src/lib/access.ts";
 import { removeDemoContent } from "../src/data/cleanup.ts";
 import { createSeed } from "../src/data/seed.ts";
 import { normalizeAttendance } from "../src/domain/attendance.ts";
+import { ensureAutomation } from "../src/domain/automation.ts";
 import { applyLocationRetention, withAttendancePolicy } from "../src/domain/location.ts";
 import { DATA_VERSION, type AppState } from "../src/types.ts";
 
@@ -41,12 +42,12 @@ export function readWorkspace(): AppState {
     db.exec("DELETE FROM sessions");
     return state;
   }
-  const parsed = withAttendancePolicy(normalizeAttendance(JSON.parse(row.document) as AppState));
+  const parsed = ensureAutomation(withAttendancePolicy(normalizeAttendance(JSON.parse(row.document) as AppState)));
   parsed.currentUserId = null;
   const cleaned = removeDemoContent(parsed);
   const granted = grantHrAdminAccess(cleaned.state);
-  const retained = applyLocationRetention(granted.state);
-  if (cleaned.changed || granted.changed || retained.changed) writeWorkspace(retained.state);
+  const retained = applyLocationRetention(ensureAutomation(granted.state));
+  if (cleaned.changed || granted.changed || retained.changed || !parsed.automation) writeWorkspace(retained.state);
   return retained.state;
 }
 

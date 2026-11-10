@@ -11,10 +11,14 @@ import { describePlace } from "./place.ts";
 loadEnv();
 import type { AppState } from "../src/types.ts";
 import { actions } from "./actions.ts";
+import { checkN8nHealth, checkWahaSession, postN8nWebhook, sendWahaText } from "./automation.ts";
+import { afterActionAutomation } from "./automation-hooks.ts";
 import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
 import { presentWorkspace } from "./present.ts";
+import { appendAutomationLog, buildN8nWebhookUrl, emailEndpointReady, normalizeAutomationConfig, phoneToWahaChatId, sanitizeLogPayload, wahaReady } from "../src/domain/automation.ts";
+import { nowIso, uid } from "../src/domain/dates.ts";
 
 const PORT = Number(process.env.PORT ?? process.env.BUILDESK_API_PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -450,13 +454,15 @@ const server = createServer(async (request, response) => {
         return;
       }
       const input = body.input && typeof body.input === "object" ? body.input as Record<string, any> : {};
-      const outcome = handler({ ...source, currentUserId: accountId }, input);
+      const before = { ...source, currentUserId: accountId };
+      const outcome = handler(before, input);
       if (!outcome.result.ok) {
         send(response, 200, { result: outcome.result, toast: outcome.toast, tone: outcome.tone ?? "error" });
         return;
       }
       const saved = { ...outcome.state, currentUserId: null };
       writeWorkspace(saved);
+      afterActionAutomation(name, before, outcome.state, { ...input, resultId: outcome.result.id });
       const still = sessionStillValid(saved, accountId);
       if (!still) deleteSession(token);
       send(
@@ -465,6 +471,131 @@ const server = createServer(async (request, response) => {
         { result: outcome.result, toast: outcome.toast, tone: outcome.tone ?? "success", state: still ? presentWorkspace(saved, accountId) : null },
         still ? {} : { "set-cookie": cookieHeader(null, request) },
       );
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/automation/health") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "automation.manage")) {
+        send(response, 403, { ok: false, message: "Automation is limited to authorized administrators." });
+        return;
+      }
+      const body = await readBody(request);
+      const channel = body.channel === "email" ? "email" : "whatsapp";
+      const config = normalizeAutomationConfig(state.automation);
+      if (channel === "whatsapp") {
+        const result = await checkWahaSession(config.waha);
+        const check = {
+          status: result.ok ? "ok" as const : "error" as const,
+          checkedAt: nowIso(),
+          latencyMs: result.latencyMs,
+          message: result.message,
+        };
+        const outcome = actions.recordAutomationHealth(state, { check });
+        if (outcome.result.ok) writeWorkspace({ ...outcome.state, currentUserId: null });
+        send(response, 200, {
+          ok: result.ok,
+          message: result.message,
+          latencyMs: result.latencyMs,
+          state: presentWorkspace(outcome.state, accountId),
+        });
+        return;
+      }
+      const result = await checkN8nHealth(config);
+      send(response, 200, { ok: result.ok, message: result.message, state: presentWorkspace(state, accountId) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/automation/test") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "automation.manage")) {
+        send(response, 403, { ok: false, message: "Automation is limited to authorized administrators." });
+        return;
+      }
+      const body = await readBody(request);
+      const channel = body.channel === "email" ? "email" : "whatsapp";
+      const message = typeof body.message === "string" && body.message.trim() ? body.message.trim() : "Buildesk People automation test message.";
+      let config = normalizeAutomationConfig(state.automation);
+      if (channel === "whatsapp") {
+        if (!wahaReady(config.waha)) {
+          send(response, 200, { ok: false, message: "Enable WAHA and save settings before testing WhatsApp.", state: presentWorkspace(state, accountId) });
+          return;
+        }
+        const chatId = phoneToWahaChatId(typeof body.phone === "string" ? body.phone : viewer.phone);
+        if (!chatId) {
+          send(response, 200, { ok: false, message: "Invalid mobile for WhatsApp.", state: presentWorkspace(state, accountId) });
+          return;
+        }
+        const result = await sendWahaText(config.waha, chatId, message);
+        config = appendAutomationLog(config, {
+          id: uid("alog"),
+          channel: "whatsapp",
+          trigger: "manual-test",
+          status: result.ok ? "success" : "failed",
+          requestPayload: sanitizeLogPayload({ chatId, text: message }),
+          responseSummary: `HTTP ${result.status}`,
+          errorMessage: result.ok ? undefined : result.text.slice(0, 280),
+          attemptedAt: nowIso(),
+          retryCount: 0,
+          employeeId: viewer.id,
+        });
+        const saved = { ...state, automation: config, currentUserId: null };
+        writeWorkspace(saved);
+        send(response, 200, {
+          ok: result.ok,
+          message: result.ok ? "WhatsApp test handed off to WAHA." : result.text.slice(0, 180),
+          state: presentWorkspace({ ...state, automation: config }, accountId),
+        });
+        return;
+      }
+      if (!emailEndpointReady(config)) {
+        send(response, 200, { ok: false, message: "Enable n8n email endpoint and base URL before testing email.", state: presentWorkspace(state, accountId) });
+        return;
+      }
+      const emailEp = config.endpoints.find((item) => item.channel === "email" && item.isEnabled && !item.webhookUrl.includes("health"));
+      const url = buildN8nWebhookUrl(config.settings.n8nWebhookBase, emailEp?.webhookUrl ?? "buildesk-people");
+      const recipient = typeof body.email === "string" ? body.email : viewer.email;
+      const result = await postN8nWebhook(url, {
+        recipientEmail: recipient,
+        emailSubject: "Buildesk People automation test",
+        messageBody: message,
+        emailFromAddress: config.settings.emailFromAddress,
+        emailFromName: config.settings.emailFromName,
+        delayHours: 0,
+        waitAmount: 0,
+      });
+      config = appendAutomationLog(config, {
+        id: uid("alog"),
+        channel: "email",
+        trigger: "manual-test",
+        status: result.ok ? "success" : "failed",
+        requestPayload: sanitizeLogPayload({ recipientEmail: recipient, messageBody: message }),
+        responseSummary: `HTTP ${result.status}`,
+        errorMessage: result.ok ? undefined : result.text.slice(0, 280),
+        attemptedAt: nowIso(),
+        retryCount: 0,
+        employeeId: viewer.id,
+      });
+      writeWorkspace({ ...state, automation: config, currentUserId: null });
+      send(response, 200, {
+        ok: result.ok,
+        message: result.ok ? "Email test posted to n8n." : result.text.slice(0, 180),
+        state: presentWorkspace({ ...state, automation: config }, accountId),
+      });
       return;
     }
 

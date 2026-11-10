@@ -671,6 +671,28 @@ img.avatar { object-fit: cover; display: block; }
 .history-folder { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
 .history-folder h3 { margin: 0 0 8px; }
 
+.automation-module .automation-feed { list-style: none; margin: 0; padding: 0; }
+.automation-steps { margin: 0; padding-left: 1.2rem; color: var(--color-text); }
+.automation-steps li { margin-bottom: 8px; }
+.automation-trigger-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.automation-chip {
+  display: inline-flex; align-items: center; padding: 6px 10px;
+  border-radius: 8px; background: var(--primary-50); color: var(--primary-800);
+  border: 1px solid var(--primary-100); font-size: 13px; font-weight: 650;
+}
+.automation-preview {
+  margin: 10px 0 12px; padding: 12px 14px; border-radius: 12px;
+  background: var(--neutral-50); border: 1px solid var(--color-border);
+  color: var(--neutral-800); min-height: 64px;
+}
+[data-theme="dark"] .automation-chip {
+  background: color-mix(in srgb, var(--primary-900) 55%, transparent);
+  color: var(--primary-100); border-color: var(--primary-800);
+}
+[data-theme="dark"] .automation-preview {
+  background: var(--color-surface-raised); color: var(--color-text);
+}
+
 @media (max-width: 1100px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .welcome-art { display: none; }

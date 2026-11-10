@@ -1,3 +1,4 @@
+import { defaultAutomationConfig } from "../data/automationDefaults";
 import { DEFAULT_ROLE_PERMISSIONS } from "./access";
 import type { ToastTone } from "../store/mutations";
 import type { AppState, Result, UserAccount } from "../types";
@@ -42,6 +43,7 @@ export function signedOutState(accounts: UserAccount[]): AppState {
       attendanceLocationRequired: false,
       locationRetentionDays: null,
     },
+    automation: defaultAutomationConfig(),
   };
 }
 

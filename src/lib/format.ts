@@ -69,6 +69,11 @@ const LABELS: Record<string, string> = {
   invited: "Invited",
   suspended: "Suspended",
   deactivated: "Deactivated",
+  success: "Success",
+  retrying: "Retrying",
+  whatsapp: "WhatsApp",
+  email: "Email",
+  automation: "Automation",
 };
 
 const TONES: Record<string, string> = {
@@ -113,6 +118,10 @@ const TONES: Record<string, string> = {
   retired: "gray",
   low: "gray",
   medium: "blue",
+  success: "green",
+  retrying: "amber",
+  whatsapp: "green",
+  email: "blue",
 };
 
 export function labelFor(value: string): string {

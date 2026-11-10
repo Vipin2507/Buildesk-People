@@ -37,7 +37,8 @@ export type Permission =
   | "settings.payroll"
   | "settings.roles"
   | "audit.view"
-  | "users.manage";
+  | "users.manage"
+  | "automation.manage";
 
 export type EmploymentStatus = "active" | "on_notice" | "inactive";
 export type EmploymentType = "full_time" | "contract";
@@ -66,7 +67,8 @@ export type AuditArea =
   | "policies"
   | "settings"
   | "insurance"
-  | "users";
+  | "users"
+  | "automation";
 export type AuditScope = "general" | "payroll" | "insurance";
 export type NotificationKind =
   | "approval"
@@ -545,6 +547,8 @@ export interface AppState {
   notifications: AppNotification[];
   audits: AuditEvent[];
   settings: OrgSettings;
+  /** WhatsApp (WAHA) + email (n8n webhook) automation. Normalized on read for older workspaces. */
+  automation?: import("./types/automation").AutomationConfig;
 }
 
 export type Result = { ok: true; id?: string } | { ok: false; message: string };

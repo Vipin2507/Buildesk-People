@@ -5,7 +5,9 @@ import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { createsCycle } from "../domain/org";
+import { ensureAutomation, normalizeAutomationConfig } from "../domain/automation";
 import { applyAdjustments, buildPayrollLines, computePayable, currentPeriod, normalizeLine, periodForMonth, periodWarnings } from "../domain/payroll";
+import type { AutomationConfig, AutomationEndpoint, AutomationRule, AutomationSettings, WahaConfig } from "../types/automation";
 import { isValidEmail, normalizeEmail } from "../lib/auth";
 import { formatDate, formatTime, fullName, rangeLabel } from "../lib/format";
 import { avatarColorAt } from "../lib/palette";
@@ -1779,4 +1781,107 @@ export function setAccountPassword(state: AppState, accountId: string, passwordH
   return ok(pushAudit({ ...saved, currentUserId: null }, accountId, "users", `${account.email} set a password.`), "Password saved.");
 }
 
-export { addDays };
+export function saveAutomationSettings(state: AppState, settings: AutomationSettings, waha: WahaConfig, endpoints: AutomationEndpoint[]): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  if (settings.n8nWebhookBase && !/^https?:\/\//i.test(settings.n8nWebhookBase.trim()) && settings.n8nWebhookBase.trim().length > 0) {
+    return fail(state, "n8n webhook base should start with http:// or https://.");
+  }
+  if (waha.apiUrl && !/^https?:\/\//i.test(waha.apiUrl.trim()) && waha.apiUrl.trim().length > 0) {
+    return fail(state, "WAHA API URL should start with http:// or https://.");
+  }
+  const automation: AutomationConfig = {
+    ...current,
+    settings: {
+      n8nWebhookBase: settings.n8nWebhookBase.trim(),
+      automationsEnabled: Boolean(settings.automationsEnabled),
+      emailCc: settings.emailCc?.trim() ?? "",
+      emailFromAddress: settings.emailFromAddress?.trim() ?? "",
+      emailFromName: settings.emailFromName?.trim() || "Buildesk People",
+    },
+    waha: {
+      apiUrl: waha.apiUrl.trim(),
+      apiKey: waha.apiKey,
+      sessionName: waha.sessionName.trim() || "default",
+      isEnabled: Boolean(waha.isEnabled),
+      lastHealthCheck: current.waha.lastHealthCheck,
+    },
+    endpoints: endpoints.map((item) => ({
+      ...item,
+      label: item.label.trim() || item.channel,
+      webhookUrl: item.webhookUrl.trim(),
+      isEnabled: Boolean(item.isEnabled),
+    })),
+    updatedAt: nowIso(),
+  };
+  return ok(pushAudit({ ...state, automation }, actor.id, "automation", "Updated automation channels and settings."), "Automation settings saved.");
+}
+
+export function saveAutomationRule(state: AppState, draft: Omit<AutomationRule, "id" | "createdAt" | "updatedAt"> & { id?: string }): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  if (draft.name.trim().length < 3) return fail(state, "Give the rule a short name.");
+  if (draft.templateBody.trim().length < 3) return fail(state, "Add a message template body.");
+  if (draft.channel === "email" && !(draft.templateSubject ?? "").trim()) return fail(state, "Email rules need a subject template.");
+  const at = nowIso();
+  const existing = draft.id ? current.rules.find((item) => item.id === draft.id) : undefined;
+  const rule: AutomationRule = {
+    id: existing?.id ?? uid("arule"),
+    name: draft.name.trim(),
+    description: draft.description?.trim() || undefined,
+    trigger: draft.trigger,
+    channel: draft.channel,
+    isActive: Boolean(draft.isActive),
+    templateSubject: draft.templateSubject?.trim() || undefined,
+    templateBody: draft.templateBody.trim(),
+    emailCc: draft.emailCc?.trim() || undefined,
+    offsetMinutes: draft.offsetMinutes,
+    createdAt: existing?.createdAt ?? at,
+    updatedAt: at,
+  };
+  const rules = existing ? current.rules.map((item) => (item.id === rule.id ? rule : item)) : [rule, ...current.rules];
+  const automation = { ...current, rules, updatedAt: at };
+  return ok(pushAudit({ ...state, automation }, actor.id, "automation", `${existing ? "Updated" : "Created"} automation rule “${rule.name}”.`), existing ? "Rule saved." : "Rule created.", rule.id);
+}
+
+export function deleteAutomationRule(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  const rule = current.rules.find((item) => item.id === id);
+  if (!rule) return fail(state, "That rule was not found.", true);
+  const automation = { ...current, rules: current.rules.filter((item) => item.id !== id), updatedAt: nowIso() };
+  return ok(pushAudit({ ...state, automation }, actor.id, "automation", `Deleted automation rule “${rule.name}”.`), "Rule deleted.");
+}
+
+export function setAutomationRuleActive(state: AppState, id: string, isActive: boolean): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  if (!current.rules.some((item) => item.id === id)) return fail(state, "That rule was not found.", true);
+  const automation = {
+    ...current,
+    rules: current.rules.map((item) => (item.id === id ? { ...item, isActive, updatedAt: nowIso() } : item)),
+    updatedAt: nowIso(),
+  };
+  return ok(pushAudit({ ...state, automation }, actor.id, "automation", `${isActive ? "Activated" : "Paused"} an automation rule.`), isActive ? "Rule activated." : "Rule paused.");
+}
+
+export function clearAutomationLogs(state: AppState): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  return ok(pushAudit({ ...state, automation: { ...current, logs: [], updatedAt: nowIso() } }, actor.id, "automation", "Cleared automation logs."), "Automation logs cleared.");
+}
+
+export function recordAutomationHealth(state: AppState, check: NonNullable<WahaConfig["lastHealthCheck"]>): Outcome {
+  const actor = requireUser(state, "automation.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeAutomationConfig(state.automation);
+  const automation = { ...current, waha: { ...current.waha, lastHealthCheck: check }, updatedAt: nowIso() };
+  return ok({ ...state, automation }, check.status === "ok" ? "WAHA session looks healthy." : "WAHA health check failed.");
+}
+
+export { addDays, ensureAutomation };

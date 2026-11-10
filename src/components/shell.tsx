@@ -19,6 +19,7 @@ import {
   Ticket,
   Users,
   Wallet,
+  Workflow,
 } from "lucide-react";
 import { navCounts } from "../domain/feed";
 import { labelFor } from "../lib/format";
@@ -39,6 +40,7 @@ const NAV = [
   { to: "/policies", label: "HR Policies", icon: BookOpen },
   { to: "/users", label: "User Management", icon: ShieldCheck },
   { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/automation", label: "Automation", icon: Workflow },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -50,6 +52,7 @@ function sectionTitle(pathname: string): string {
   if (pathname.startsWith("/profile")) return "Profile";
   if (pathname.startsWith("/policies")) return "HR Policies";
   if (pathname.startsWith("/users")) return "User Management";
+  if (pathname.startsWith("/automation")) return "Automation";
   return NAV.find((item) => item.to === pathname)?.label ?? "Buildesk People";
 }
 
@@ -91,6 +94,7 @@ export function Shell() {
   const counts = navCounts(state, user);
   const unread = state.notifications.filter((item) => item.userId === user.id && !item.read);
   const showSettings = can("settings.org") || can("settings.payroll") || can("settings.roles");
+  const showAutomation = can("automation.manage");
   const results = searchItems(state, user.id, can("assets.manage"), can("tickets.manage"), query);
   const full = `${user.firstName} ${user.lastName}`;
 
@@ -107,7 +111,7 @@ export function Shell() {
           </div>
         </div>
         <nav className="side-nav">
-          {NAV.filter((item) => (item.to !== "/settings" || showSettings) && (item.to !== "/policies" || can("policies.view") || can("policies.manage")) && (item.to !== "/users" || can("users.manage"))).map((item) => {
+          {NAV.filter((item) => (item.to !== "/settings" || showSettings) && (item.to !== "/automation" || showAutomation) && (item.to !== "/policies" || can("policies.view") || can("policies.manage")) && (item.to !== "/users" || can("users.manage"))).map((item) => {
             const Icon = item.icon;
             const count = counts[item.to] ?? 0;
             return (

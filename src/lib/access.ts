@@ -43,6 +43,7 @@ export const PERMISSIONS: PermissionMeta[] = [
   { id: "settings.roles", group: "Settings", label: "Roles and permissions", description: "Maintain the permission matrix." },
   { id: "audit.view", group: "Settings", label: "View audit history", description: "See the audit trail allowed for the role." },
   { id: "users.manage", group: "User management", label: "Manage login accounts", description: "Invite, edit, suspend, and deactivate login accounts." },
+  { id: "automation.manage", group: "Automation", label: "Manage automation", description: "Configure WhatsApp and email automation rules, channels, and logs." },
 ];
 
 const ALL = PERMISSIONS.map((item) => item.id);
@@ -144,14 +145,27 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
 export function grantHrAdminAccess(state: AppState): { state: AppState; changed: boolean } {
   const current = state.settings.rolePermissions.hr ?? [];
   const previous = current.length === PREVIOUS_HR.length && PREVIOUS_HR.every((id) => current.includes(id));
-  if (!previous) return { state, changed: false };
+  let rolePermissions = { ...state.settings.rolePermissions };
+  let changed = false;
+  if (previous) {
+    rolePermissions = { ...rolePermissions, hr: [...DEFAULT_ROLE_PERMISSIONS.hr] };
+    changed = true;
+  }
+  for (const role of ["hr", "admin"] as const) {
+    const list = rolePermissions[role] ?? [];
+    if (!list.includes("automation.manage")) {
+      rolePermissions = { ...rolePermissions, [role]: [...list, "automation.manage"] };
+      changed = true;
+    }
+  }
+  if (!changed) return { state, changed: false };
   return {
     changed: true,
     state: {
       ...state,
       settings: {
         ...state.settings,
-        rolePermissions: { ...state.settings.rolePermissions, hr: [...DEFAULT_ROLE_PERMISSIONS.hr] },
+        rolePermissions,
       },
     },
   };

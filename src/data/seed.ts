@@ -1,3 +1,4 @@
+import { defaultAutomationConfig } from "./automationDefaults";
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { AVATAR_COLORS } from "../lib/palette";
 import type { AppState, Employee, UserAccount } from "../types";
@@ -155,5 +156,6 @@ export function createSeed(): AppState {
       attendanceLocationRequired: false,
       locationRetentionDays: null,
     },
+    automation: defaultAutomationConfig(),
   };
 }

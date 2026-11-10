@@ -4,6 +4,7 @@ import { Shell } from "./components/shell";
 import { EmptyState } from "./components/ui";
 import { Assets } from "./pages/Assets";
 import { Attendance } from "./pages/Attendance";
+import { Automation } from "./pages/Automation";
 import { Expenses } from "./pages/Expenses";
 import { Leave } from "./pages/Leave";
 import { Notifications } from "./pages/Notifications";
@@ -51,6 +52,7 @@ export function App() {
                 <Route path="users" element={<Users />} />
                 <Route path="users/:id" element={<UserDetail />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="automation" element={<Automation />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="notifications" element={<Notifications />} />

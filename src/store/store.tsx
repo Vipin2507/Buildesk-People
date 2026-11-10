@@ -87,6 +87,13 @@ interface StoreValue {
     removeCategory: (kind: "expense" | "ticket", name: string) => Promise<Result>;
     setPermission: (role: Parameters<typeof m.setPermission>[1], permission: Permission, enabled: boolean) => Promise<Result>;
     resetPermissions: () => Promise<Result>;
+    saveAutomationSettings: (settings: import("../types/automation").AutomationSettings, waha: import("../types/automation").WahaConfig, endpoints: import("../types/automation").AutomationEndpoint[]) => Promise<Result>;
+    saveAutomationRule: (draft: Parameters<typeof m.saveAutomationRule>[1]) => Promise<Result>;
+    deleteAutomationRule: (id: string) => Promise<Result>;
+    setAutomationRuleActive: (id: string, isActive: boolean) => Promise<Result>;
+    clearAutomationLogs: () => Promise<Result>;
+    checkAutomationHealth: (channel: "whatsapp" | "email") => Promise<{ ok: boolean; message: string }>;
+    testAutomationSend: (input: { channel: "whatsapp" | "email"; message?: string; email?: string; phone?: string }) => Promise<{ ok: boolean; message: string }>;
   };
 }
 
@@ -306,6 +313,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     removeCategory: (kind, name) => run("removeCategory", { kind, name }),
     setPermission: (role, permission, enabled) => run("setPermission", { role, permission, enabled }),
     resetPermissions: () => run("resetPermissions"),
+    saveAutomationSettings: (settings, waha, endpoints) => run("saveAutomationSettings", { settings, waha, endpoints }),
+    saveAutomationRule: (draft) => run("saveAutomationRule", draft),
+    deleteAutomationRule: (id) => run("deleteAutomationRule", { id }),
+    setAutomationRuleActive: (id, isActive) => run("setAutomationRuleActive", { id, isActive }),
+    clearAutomationLogs: () => run("clearAutomationLogs"),
+    checkAutomationHealth: async (channel) => {
+      const { status, payload } = await request("/api/automation/health", { channel });
+      if (payload.state) adopt(payload.state);
+      const message = payload.message ?? (status === 200 ? "Health check finished." : "Health check failed.");
+      pushToast(message, payload.ok ? "success" : "error");
+      return { ok: Boolean(payload.ok), message };
+    },
+    testAutomationSend: async (input) => {
+      const { status, payload } = await request("/api/automation/test", input);
+      if (payload.state) adopt(payload.state);
+      const message = payload.message ?? (status === 200 ? "Test finished." : "Test failed.");
+      pushToast(message, payload.ok ? "success" : "error");
+      return { ok: Boolean(payload.ok), message };
+    },
   };
 
   const value: StoreValue = {
