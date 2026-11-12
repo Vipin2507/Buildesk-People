@@ -99,7 +99,7 @@ function MyLeave() {
           {error && <Banner tone="error">{error}</Banner>}
           <Field label="Type">
             <select value={typeId} onChange={(event) => setType(event.target.value)}>
-              {state.settings.leaveTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {state.settings.leaveTypes.filter((item) => item.active !== false).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </Field>
           <div className="form-grid">

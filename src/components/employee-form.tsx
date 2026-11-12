@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { companyConfig, designationOptions, relationshipOptions } from "../domain/config";
 import { todayIso } from "../domain/dates";
+import { masterLabel } from "../domain/masters";
 import { fullName } from "../lib/format";
 import type { EmployeeDraft } from "../store/mutations";
 import { useApp } from "../store/store";
@@ -43,8 +45,16 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
   const managers = state.employees
     .filter((item) => item.id !== employee?.id && item.status !== "inactive")
     .sort((a, b) => fullName(a).localeCompare(fullName(b)));
-  const departments = [...state.departments].sort((a, b) => a.name.localeCompare(b.name));
-  const locations = [...state.locations].sort((a, b) => a.name.localeCompare(b.name));
+  const config = companyConfig(state);
+  const departments = [...state.departments]
+    .filter((item) => item.active !== false || item.id === draft.departmentId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const locations = [...state.locations]
+    .filter((item) => item.active !== false || item.id === draft.locationId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const titles = designationOptions(state);
+  void config;
+  void relationshipOptions;
 
   useEffect(() => {
     if (!focusField.current) return;
@@ -100,7 +110,10 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
             <input data-field="email" type="email" autoComplete="email" aria-required="true" aria-invalid={Boolean(errors.email)} value={draft.email} onChange={(event) => set({ email: event.target.value })} />
           </Field>
           <Field label="Job title" required error={errors.jobTitle}>
-            <input data-field="jobTitle" autoComplete="organization-title" aria-required="true" aria-invalid={Boolean(errors.jobTitle)} value={draft.jobTitle} onChange={(event) => set({ jobTitle: event.target.value })} />
+            <input list="designation-options" data-field="jobTitle" autoComplete="organization-title" aria-required="true" aria-invalid={Boolean(errors.jobTitle)} value={draft.jobTitle} onChange={(event) => set({ jobTitle: event.target.value })} />
+            <datalist id="designation-options">
+              {titles.map((item) => <option key={item} value={item} />)}
+            </datalist>
           </Field>
           <Field label="Department" required error={errors.departmentId}>
             <select data-field="departmentId" aria-required="true" aria-invalid={Boolean(errors.departmentId)} value={draft.departmentId} onChange={(event) => set({ departmentId: event.target.value })}>
@@ -122,8 +135,8 @@ export function EmployeeForm({ employee, onDone }: { employee?: Employee; onDone
           </Field>
           <Field label="Employment type">
             <select value={draft.employmentType} onChange={(event) => set({ employmentType: event.target.value as EmploymentType })}>
-              <option value="full_time">Full-time</option>
-              <option value="contract">Contract</option>
+              <option value="full_time">{masterLabel(state, "employment_types", "full_time")}</option>
+              <option value="contract">{masterLabel(state, "employment_types", "contract")}</option>
             </select>
           </Field>
           <Field label="Status">

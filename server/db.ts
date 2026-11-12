@@ -8,6 +8,7 @@ import { createSeed } from "../src/data/seed.ts";
 import { normalizeAttendance } from "../src/domain/attendance.ts";
 import { ensureAutomation } from "../src/domain/automation.ts";
 import { applyLocationRetention, withAttendancePolicy } from "../src/domain/location.ts";
+import { ensureMasters } from "../src/domain/masters.ts";
 import { DATA_VERSION, type AppState } from "../src/types.ts";
 
 const file = join(process.cwd(), "data", "buildesk.sqlite");
@@ -42,12 +43,15 @@ export function readWorkspace(): AppState {
     db.exec("DELETE FROM sessions");
     return state;
   }
-  const parsed = ensureAutomation(withAttendancePolicy(normalizeAttendance(JSON.parse(row.document) as AppState)));
-  parsed.currentUserId = null;
-  const cleaned = removeDemoContent(parsed);
+  const parsed = ensureMasters(ensureAutomation(withAttendancePolicy(normalizeAttendance(JSON.parse(row.document) as AppState))));
+  parsed.state.currentUserId = null;
+  const cleaned = removeDemoContent(parsed.state);
   const granted = grantHrAdminAccess(cleaned.state);
-  const retained = applyLocationRetention(ensureAutomation(granted.state));
-  if (cleaned.changed || granted.changed || retained.changed || !parsed.automation) writeWorkspace(retained.state);
+  const mastered = ensureMasters(ensureAutomation(granted.state));
+  const retained = applyLocationRetention(mastered.state);
+  if (cleaned.changed || granted.changed || mastered.changed || retained.changed || parsed.changed || !parsed.state.automation) {
+    writeWorkspace(retained.state);
+  }
   return retained.state;
 }
 

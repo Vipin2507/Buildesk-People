@@ -1,4 +1,5 @@
 import { defaultAutomationConfig } from "./automationDefaults";
+import { defaultMasters } from "../domain/masters";
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { AVATAR_COLORS } from "../lib/palette";
 import type { AppState, Employee, UserAccount } from "../types";
@@ -138,24 +139,33 @@ export function createSeed(): AppState {
     settings: {
       orgName: "Craving Code",
       currency: "INR",
+      timezone: "Asia/Kolkata",
       workStart: "09:30",
       graceMinutes: 15,
       weeklyOff: [0, 6],
       payrollStartDay: 1,
       payrollEndDay: 30,
       leaveTypes: [
-        { id: "casual", name: "Casual leave", paid: true, annual: 8, allowHalfDay: true },
-        { id: "sick", name: "Sick leave", paid: true, annual: 10, allowHalfDay: true },
-        { id: "earned", name: "Earned leave", paid: true, annual: 15, allowHalfDay: false },
-        { id: "unpaid", name: "Unpaid leave", paid: false, annual: null, allowHalfDay: true },
-        { id: "comp-off", name: "Comp-off", paid: true, annual: null, allowHalfDay: true },
+        { id: "casual", name: "Casual leave", paid: true, annual: 8, allowHalfDay: true, active: true },
+        { id: "sick", name: "Sick leave", paid: true, annual: 10, allowHalfDay: true, active: true },
+        { id: "earned", name: "Earned leave", paid: true, annual: 15, allowHalfDay: false, active: true },
+        { id: "unpaid", name: "Unpaid leave", paid: false, annual: null, allowHalfDay: true, active: true },
+        { id: "comp-off", name: "Comp-off", paid: true, annual: null, allowHalfDay: true, active: true },
       ],
       expenseCategories: ["Travel", "Meals", "Software", "Office supplies", "Other"],
       ticketCategories: ["HR", "Payroll", "IT", "Facilities", "Other"],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
       attendanceLocationRequired: false,
       locationRetentionDays: null,
+      halfDayPolicy: {
+        thresholdHours: null,
+        allowEmployeeRequest: true,
+        effectiveDate: null,
+        note: "Half-day leave uses first/second half on leave types that allow it. An hours threshold is stored only when your company configures one.",
+      },
+      notificationPrefs: { birthdays: true, events: true, approvals: true, attendance: true },
     },
+    masters: defaultMasters(),
     automation: defaultAutomationConfig(),
   };
 }

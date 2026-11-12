@@ -85,6 +85,8 @@ export type NotificationKind =
 export interface Department {
   id: string;
   name: string;
+  /** When false, hidden from new assignments but kept for existing records. */
+  active?: boolean;
 }
 
 export interface WorkLocation {
@@ -92,6 +94,51 @@ export interface WorkLocation {
   name: string;
   kind: "office" | "remote" | "client";
   city: string;
+  active?: boolean;
+}
+
+/** Configurable HR reference value managed in Settings → Masters. */
+export interface MasterValue {
+  id: string;
+  name: string;
+  /** Stable code for values that map to typed enums (e.g. work mode). */
+  code?: string;
+  description?: string;
+  active: boolean;
+  sortOrder?: number;
+  updatedAt?: string;
+  updatedBy?: string | null;
+}
+
+export type MasterKind =
+  | "designations"
+  | "employment_types"
+  | "work_modes"
+  | "regularization_reasons"
+  | "asset_types"
+  | "asset_conditions"
+  | "policy_categories"
+  | "emergency_relationships"
+  | "event_types"
+  | "payroll_earnings"
+  | "payroll_deductions"
+  | "notification_categories";
+
+export type MastersCatalog = Record<MasterKind, MasterValue[]>;
+
+export interface HalfDayPolicy {
+  /** Company-declared half-day hours threshold. Null means not configured for hour-based rules. */
+  thresholdHours: number | null;
+  allowEmployeeRequest: boolean;
+  effectiveDate: string | null;
+  note: string;
+}
+
+export interface NotificationPrefs {
+  birthdays: boolean;
+  events: boolean;
+  approvals: boolean;
+  attendance: boolean;
 }
 
 export type AccountStatus = "invited" | "active" | "suspended" | "deactivated";
@@ -159,11 +206,15 @@ export interface LeaveType {
   /** Null means the type has no annual cap, such as unpaid leave. */
   annual: number | null;
   allowHalfDay: boolean;
+  /** When false, hidden from new requests but kept for historical leave. */
+  active?: boolean;
 }
 
 export interface OrgSettings {
   orgName: string;
   currency: string;
+  /** Company timezone label for display. The office punch clock remains Asia/Kolkata in this build. */
+  timezone?: string;
   workStart: string;
   graceMinutes: number;
   weeklyOff: number[];
@@ -182,6 +233,8 @@ export interface OrgSettings {
   attendanceLocationRequired: boolean;
   /** Days to keep punch coordinates with the attendance record. Null means no separate retention period is configured. */
   locationRetentionDays: number | null;
+  halfDayPolicy?: HalfDayPolicy;
+  notificationPrefs?: NotificationPrefs;
 }
 
 export type LocationCaptureStatus = "captured" | "denied" | "unavailable" | "not_requested" | "manual";
@@ -550,6 +603,8 @@ export interface AppState {
   notifications: AppNotification[];
   audits: AuditEvent[];
   settings: OrgSettings;
+  /** Configurable HR master lists. Normalized on read for older workspaces. */
+  masters?: MastersCatalog;
   /** WhatsApp (WAHA) + email (n8n webhook) automation. Normalized on read for older workspaces. */
   automation?: import("./types/automation").AutomationConfig;
 }

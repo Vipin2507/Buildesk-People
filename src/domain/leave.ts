@@ -112,6 +112,9 @@ export function validateLeave(state: AppState, draft: LeaveDraft): { ok: true; d
     if (draft.startDate !== draft.endDate) {
       return { ok: false, message: "A half day can only be requested for a single date." };
     }
+    if (state.settings.halfDayPolicy?.allowEmployeeRequest === false) {
+      return { ok: false, message: "Half-day leave requests are turned off in company settings." };
+    }
     if (!type.allowHalfDay) {
       return { ok: false, message: `${type.name} does not allow a half day. Request a full day or choose another type.` };
     }

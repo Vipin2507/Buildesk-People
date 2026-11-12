@@ -1407,6 +1407,50 @@ img.avatar { object-fit: cover; display: block; }
   .leave-cal-grid { overflow-x: auto; }
 }
 
+.settings-module .settings-dirty { margin-top: 8px; color: var(--warning-700); }
+.settings-module .settings-footnote { margin-top: 12px; }
+.masters-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.85fr) minmax(0, 1.4fr);
+  gap: 16px;
+  margin-top: 12px;
+}
+.masters-nav {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.masters-nav button {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--color-surface);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: inherit;
+  font: inherit;
+}
+.masters-nav button.on {
+  border-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.masters-detail {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--color-surface);
+  min-height: 280px;
+}
+.masters-detail-head h3 { margin: 0 0 4px; }
+.masters-detail-head .muted { margin: 0 0 12px; }
+.masters-recent { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.masters-recent h3 { margin: 0 0 8px; font-size: 15px; }
+@media (max-width: 900px) {
+  .masters-layout { grid-template-columns: 1fr; }
+}
+
 .theme-toggle { overflow: hidden; }
 .theme-icon {
   display: grid;

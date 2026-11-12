@@ -6,6 +6,8 @@ import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { createsCycle } from "../domain/org";
 import { ensureAutomation, normalizeAutomationConfig } from "../domain/automation";
+import { createMasterValue, defaultMasters, mastersInUse } from "../domain/masters";
+import type { MasterKind } from "../types";
 import { applyAdjustments, buildPayrollLines, computePayable, currentPeriod, normalizeLine, periodForMonth, periodWarnings } from "../domain/payroll";
 import type { AutomationConfig, AutomationEndpoint, AutomationRule, AutomationSettings, WahaConfig } from "../types/automation";
 import { isValidEmail, normalizeEmail } from "../lib/auth";
@@ -1418,6 +1420,33 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
     if (!(patch.payrollDailyWageDivisor > 0)) return fail(state, "Daily wage divisor must be a positive number, or left blank when not configured.");
   }
   if (patch.payrollDailyWageDivisor === null) next.payrollDailyWageDivisor = null;
+  if (patch.timezone !== undefined) {
+    if (!hasPermission(state, actor, "settings.org")) return fail(state, "You don't have permission to change these settings.", true);
+    if (patch.timezone.trim().length < 3) return fail(state, "Enter a timezone label such as Asia/Kolkata.");
+    next.timezone = patch.timezone.trim();
+  }
+  if (patch.halfDayPolicy !== undefined) {
+    if (!hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "leave.manage")) {
+      return fail(state, "You don't have permission to change half-day settings.", true);
+    }
+    const hours = patch.halfDayPolicy.thresholdHours;
+    if (hours !== null && (!(hours > 0) || hours > 12)) return fail(state, "Half-day threshold hours must be blank or between 0 and 12.");
+    next.halfDayPolicy = {
+      thresholdHours: hours,
+      allowEmployeeRequest: patch.halfDayPolicy.allowEmployeeRequest !== false,
+      effectiveDate: patch.halfDayPolicy.effectiveDate || null,
+      note: patch.halfDayPolicy.note?.trim() || state.settings.halfDayPolicy?.note || "",
+    };
+  }
+  if (patch.notificationPrefs !== undefined) {
+    if (!hasPermission(state, actor, "settings.org")) return fail(state, "You don't have permission to change notification preferences.", true);
+    next.notificationPrefs = {
+      birthdays: patch.notificationPrefs.birthdays !== false,
+      events: patch.notificationPrefs.events !== false,
+      approvals: patch.notificationPrefs.approvals !== false,
+      attendance: patch.notificationPrefs.attendance !== false,
+    };
+  }
   if ((patch.orgName || patch.workStart || patch.graceMinutes || patch.weeklyOff || patch.currency) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
     return fail(state, "You don't have permission to change these settings.", true);
   }
@@ -1433,8 +1462,41 @@ export function updateLeaveType(state: AppState, input: LeaveType): Outcome {
   if (!state.settings.leaveTypes.some((item) => item.id === input.id)) return fail(state, "That leave type was not found.");
   if (input.name.trim().length < 3) return fail(state, "Enter a leave type name.");
   if (input.annual !== null && (Number.isNaN(input.annual) || input.annual < 0)) return fail(state, "Annual entitlement can't be negative. Leave it empty for no cap.");
-  const leaveTypes = state.settings.leaveTypes.map((item) => (item.id === input.id ? { ...input, name: input.name.trim(), annual: input.id === "comp-off" || input.id === "unpaid" ? input.annual : input.annual } : item));
+  const leaveTypes = state.settings.leaveTypes.map((item) => (item.id === input.id ? { ...input, name: input.name.trim(), active: input.active !== false } : item));
   return ok(pushAudit({ ...state, settings: { ...state.settings, leaveTypes } }, actor.id, "leave", `Updated the leave type ${input.name.trim()}.`), "Leave type saved.");
+}
+
+export function addLeaveType(state: AppState, input: Omit<LeaveType, "id"> & { id?: string }): Outcome {
+  const actor = requireUser(state, "leave.manage");
+  if (!isEmployee(actor)) return actor;
+  const name = input.name.trim();
+  if (name.length < 3) return fail(state, "Enter a leave type name.");
+  if (input.annual !== null && (Number.isNaN(input.annual) || input.annual < 0)) return fail(state, "Annual entitlement can't be negative. Leave it empty for no cap.");
+  if (state.settings.leaveTypes.some((item) => item.name.toLowerCase() === name.toLowerCase())) return fail(state, "That leave type already exists.");
+  const leaveType: LeaveType = {
+    id: input.id?.trim() || uid("leave"),
+    name,
+    paid: Boolean(input.paid),
+    annual: input.annual,
+    allowHalfDay: Boolean(input.allowHalfDay),
+    active: true,
+  };
+  return ok(pushAudit({ ...state, settings: { ...state.settings, leaveTypes: [...state.settings.leaveTypes, leaveType] } }, actor.id, "leave", `Added the leave type ${name}.`), "Leave type added.");
+}
+
+export function setLeaveTypeActive(state: AppState, id: string, active: boolean): Outcome {
+  const actor = requireUser(state, "leave.manage");
+  if (!isEmployee(actor)) return actor;
+  const current = state.settings.leaveTypes.find((item) => item.id === id);
+  if (!current) return fail(state, "That leave type was not found.");
+  if (!active && state.leaveRequests.some((item) => item.typeId === id && item.status === "pending")) {
+    return fail(state, "Resolve pending requests for this leave type before archiving it.");
+  }
+  if (!active && state.settings.leaveTypes.filter((item) => item.active !== false).length <= 1) {
+    return fail(state, "Keep at least one active leave type.");
+  }
+  const leaveTypes = state.settings.leaveTypes.map((item) => (item.id === id ? { ...item, active } : item));
+  return ok(pushAudit({ ...state, settings: { ...state.settings, leaveTypes } }, actor.id, "leave", `${active ? "Restored" : "Archived"} the leave type ${current.name}.`), active ? "Leave type restored." : "Leave type archived.");
 }
 
 export function addDepartment(state: AppState, nameValue: string): Outcome {
@@ -1442,35 +1504,59 @@ export function addDepartment(state: AppState, nameValue: string): Outcome {
   if (!isEmployee(actor)) return actor;
   const clean = nameValue.trim();
   if (clean.length < 2) return fail(state, "Enter a department name.");
-  if (state.departments.some((item) => item.name.toLowerCase() === clean.toLowerCase())) return fail(state, "That department already exists.");
-  return ok(pushAudit({ ...state, departments: [...state.departments, { id: uid("dep"), name: clean }] }, actor.id, "settings", `Added the ${clean} department.`), "Department added.");
+  if (state.departments.some((item) => item.name.toLowerCase() === clean.toLowerCase() && item.active !== false)) {
+    return fail(state, "That department already exists.");
+  }
+  return ok(pushAudit({ ...state, departments: [...state.departments, { id: uid("dep"), name: clean, active: true }] }, actor.id, "settings", `Added the ${clean} department.`), "Department added.");
 }
 
 export function deleteDepartment(state: AppState, id: string): Outcome {
   const actor = requireUser(state, "settings.org");
   if (!isEmployee(actor)) return actor;
-  if (state.employees.some((item) => item.departmentId === id)) return fail(state, "Move employees out of this department before removing it.");
   const department = state.departments.find((item) => item.id === id);
   if (!department) return fail(state, "That department was not found.");
+  if (state.employees.some((item) => item.departmentId === id)) {
+    const departments = state.departments.map((item) => (item.id === id ? { ...item, active: false } : item));
+    return ok(pushAudit({ ...state, departments }, actor.id, "settings", `Archived the ${department.name} department because employees still reference it.`), "Department archived.");
+  }
   return ok(pushAudit({ ...state, departments: state.departments.filter((item) => item.id !== id) }, actor.id, "settings", `Removed the ${department.name} department.`), "Department removed.");
+}
+
+export function restoreDepartment(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const department = state.departments.find((item) => item.id === id);
+  if (!department) return fail(state, "That department was not found.");
+  const departments = state.departments.map((item) => (item.id === id ? { ...item, active: true } : item));
+  return ok(pushAudit({ ...state, departments }, actor.id, "settings", `Restored the ${department.name} department.`), "Department restored.");
 }
 
 export function addLocation(state: AppState, input: { name: string; city: string; kind: "office" | "remote" | "client" }): Outcome {
   const actor = requireUser(state, "settings.org");
   if (!isEmployee(actor)) return actor;
   if (input.name.trim().length < 2 || input.city.trim().length < 2) return fail(state, "Enter a location name and city.");
-  return ok(pushAudit({ ...state, locations: [...state.locations, { id: uid("loc"), name: input.name.trim(), city: input.city.trim(), kind: input.kind }] }, actor.id, "settings", `Added the location ${input.name.trim()}.`), "Location added.");
+  return ok(pushAudit({ ...state, locations: [...state.locations, { id: uid("loc"), name: input.name.trim(), city: input.city.trim(), kind: input.kind, active: true }] }, actor.id, "settings", `Added the location ${input.name.trim()}.`), "Location added.");
 }
 
 export function deleteLocation(state: AppState, id: string): Outcome {
   const actor = requireUser(state, "settings.org");
   if (!isEmployee(actor)) return actor;
-  if (state.employees.some((item) => item.locationId === id) || state.holidays.some((item) => item.locationId === id)) {
-    return fail(state, "This location is used by employees or holidays, so it can't be removed.");
-  }
   const location = state.locations.find((item) => item.id === id);
   if (!location) return fail(state, "That location was not found.");
+  if (state.employees.some((item) => item.locationId === id) || state.holidays.some((item) => item.locationId === id) || state.events.some((item) => item.locationId === id)) {
+    const locations = state.locations.map((item) => (item.id === id ? { ...item, active: false } : item));
+    return ok(pushAudit({ ...state, locations }, actor.id, "settings", `Archived the location ${location.name} because records still reference it.`), "Location archived.");
+  }
   return ok(pushAudit({ ...state, locations: state.locations.filter((item) => item.id !== id) }, actor.id, "settings", `Removed the location ${location.name}.`), "Location removed.");
+}
+
+export function restoreLocation(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const location = state.locations.find((item) => item.id === id);
+  if (!location) return fail(state, "That location was not found.");
+  const locations = state.locations.map((item) => (item.id === id ? { ...item, active: true } : item));
+  return ok(pushAudit({ ...state, locations }, actor.id, "settings", `Restored the location ${location.name}.`), "Location restored.");
 }
 
 export function addCategory(state: AppState, kind: "expense" | "ticket", nameValue: string): Outcome {
@@ -1491,6 +1577,73 @@ export function removeCategory(state: AppState, kind: "expense" | "ticket", name
   const used = kind === "expense" ? state.expenses.some((item) => item.category === nameValue) : state.tickets.some((item) => item.category === nameValue);
   if (used) return fail(state, "This category is used on existing records, so it stays available.");
   return ok(pushAudit({ ...state, settings: { ...state.settings, [key]: state.settings[key].filter((item) => item !== nameValue) } }, actor.id, "settings", `Removed the ${kind} category ${nameValue}.`), "Category removed.");
+}
+
+export function saveMasterValue(
+  state: AppState,
+  kind: MasterKind,
+  input: { id?: string; name: string; code?: string; description?: string },
+): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const name = input.name.trim();
+  if (name.length < 2) return fail(state, "Enter a master value name.");
+  const catalog = { ...(state.masters ?? defaultMasters()) };
+  const list = [...(catalog[kind] ?? [])];
+  const existing = input.id ? list.find((item) => item.id === input.id) : undefined;
+  if (existing) {
+    const next = {
+      ...existing,
+      name,
+      code: input.code?.trim() || existing.code,
+      description: input.description?.trim() ?? existing.description ?? "",
+      updatedAt: nowIso(),
+      updatedBy: actor.id,
+    };
+    catalog[kind] = list.map((item) => (item.id === existing.id ? next : item));
+    return ok(pushAudit({ ...state, masters: catalog }, actor.id, "settings", `Updated master ${kind.replaceAll("_", " ")} “${name}”.`), "Master value saved.");
+  }
+  if (list.some((item) => item.name.toLowerCase() === name.toLowerCase() && item.active !== false)) {
+    return fail(state, "That value already exists in this master list.");
+  }
+  const created = { ...createMasterValue(name, input.code, input.description), updatedBy: actor.id };
+  catalog[kind] = [...list, created];
+  return ok(pushAudit({ ...state, masters: catalog }, actor.id, "settings", `Added master ${kind.replaceAll("_", " ")} “${name}”.`), "Master value added.");
+}
+
+export function setMasterActive(state: AppState, kind: MasterKind, id: string, active: boolean): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const catalog = { ...(state.masters ?? defaultMasters()) };
+  const list = [...(catalog[kind] ?? [])];
+  const current = list.find((item) => item.id === id);
+  if (!current) return fail(state, "That master value was not found.");
+  if (!active) {
+    const reason = mastersInUse(state, kind, current);
+    if (reason) {
+      catalog[kind] = list.map((item) => (item.id === id ? { ...item, active: false, updatedAt: nowIso(), updatedBy: actor.id } : item));
+      return ok(pushAudit({ ...state, masters: catalog }, actor.id, "settings", `Archived master ${kind.replaceAll("_", " ")} “${current.name}”. ${reason}`), "Master value archived.");
+    }
+    if (list.filter((item) => item.active !== false).length <= 1) return fail(state, "Keep at least one active value in this list.");
+  }
+  catalog[kind] = list.map((item) => (item.id === id ? { ...item, active, updatedAt: nowIso(), updatedBy: actor.id } : item));
+  return ok(pushAudit({ ...state, masters: catalog }, actor.id, "settings", `${active ? "Restored" : "Archived"} master ${kind.replaceAll("_", " ")} “${current.name}”.`), active ? "Master value restored." : "Master value archived.");
+}
+
+export function deleteMasterValue(state: AppState, kind: MasterKind, id: string): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const catalog = { ...(state.masters ?? defaultMasters()) };
+  const list = [...(catalog[kind] ?? [])];
+  const current = list.find((item) => item.id === id);
+  if (!current) return fail(state, "That master value was not found.");
+  const reason = mastersInUse(state, kind, current);
+  if (reason) return fail(state, `${reason} Archive it instead of deleting.`);
+  if (list.filter((item) => item.active !== false).length <= 1 && current.active !== false) {
+    return fail(state, "Keep at least one active value in this list.");
+  }
+  catalog[kind] = list.filter((item) => item.id !== id);
+  return ok(pushAudit({ ...state, masters: catalog }, actor.id, "settings", `Deleted master ${kind.replaceAll("_", " ")} “${current.name}”.`), "Master value deleted.");
 }
 
 export function setPermission(state: AppState, role: Role, permission: Permission, enabled: boolean): Outcome {
