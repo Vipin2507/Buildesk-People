@@ -84,20 +84,52 @@ export function Settings() {
 function OrgForm({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   const { state, actions } = useApp();
   const [orgName, setOrg] = useState(state.settings.orgName);
+  const [legalName, setLegalName] = useState(state.settings.legalName ?? "");
+  const [registeredAddress, setRegisteredAddress] = useState(state.settings.registeredAddress ?? "");
+  const [registrationId, setRegistrationId] = useState(state.settings.registrationId ?? "");
+  const [payslipPaperSize, setPayslipPaperSize] = useState(state.settings.payslipPaperSize ?? "letter");
+  const [payslipNotes, setPayslipNotes] = useState(state.settings.payslipNotes ?? "");
   const [currency, setCurrency] = useState(state.settings.currency);
   const [timezone, setTimezone] = useState(state.settings.timezone || "Asia/Kolkata");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
 
   useEffect(() => {
-    onDirty(orgName !== state.settings.orgName || currency !== state.settings.currency || timezone !== (state.settings.timezone || "Asia/Kolkata"));
-  }, [orgName, currency, timezone, state.settings, onDirty]);
+    onDirty(
+      orgName !== state.settings.orgName
+      || legalName !== (state.settings.legalName ?? "")
+      || registeredAddress !== (state.settings.registeredAddress ?? "")
+      || registrationId !== (state.settings.registrationId ?? "")
+      || payslipPaperSize !== (state.settings.payslipPaperSize ?? "letter")
+      || payslipNotes !== (state.settings.payslipNotes ?? "")
+      || currency !== state.settings.currency
+      || timezone !== (state.settings.timezone || "Asia/Kolkata"),
+    );
+  }, [orgName, legalName, registeredAddress, registrationId, payslipPaperSize, payslipNotes, currency, timezone, state.settings, onDirty]);
 
   return (
     <section className="panel narrow">
       <h2>Organization</h2>
-      <p className="muted">Company identity used across the workspace. Departments and locations are managed in Masters.</p>
+      <p className="muted">Company identity used across the workspace and on payslip letterheads. Departments and locations are managed in Masters.</p>
       <Field label="Organization name"><input value={orgName} onChange={(event) => setOrg(event.target.value)} /></Field>
+      <Field label="Legal name on payslips" hint="Defaults to the organization name when blank.">
+        <input value={legalName} onChange={(event) => setLegalName(event.target.value)} placeholder={orgName} />
+      </Field>
+      <Field label="Registered address" hint="Required before publishing official payslips.">
+        <textarea value={registeredAddress} onChange={(event) => setRegisteredAddress(event.target.value)} rows={3} />
+      </Field>
+      <Field label="CIN / registration id" hint="Printed under the address when configured.">
+        <input value={registrationId} onChange={(event) => setRegistrationId(event.target.value)} />
+      </Field>
+      <Field label="Payslip paper size">
+        <select value={payslipPaperSize} onChange={(event) => setPayslipPaperSize(event.target.value as "letter" | "a4")}>
+          <option value="letter">Letter (reference default)</option>
+          <option value="a4">A4</option>
+        </select>
+      </Field>
+      <Field label="Payslip notes" hint="Optional note printed on every payslip.">
+        <textarea value={payslipNotes} onChange={(event) => setPayslipNotes(event.target.value)} rows={2} />
+      </Field>
       <Field label="Currency code" hint="Changing the code changes display only. Amounts are not converted.">
         <input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} />
       </Field>
@@ -111,13 +143,27 @@ function OrgForm({ onDirty }: { onDirty: (dirty: boolean) => void }) {
       {saved && <Banner tone="success">{saved}</Banner>}
       <div className="actions">
         <Button onClick={async () => {
-          const result = await actions.updateSettings({ orgName, currency, timezone });
+          const result = await actions.updateSettings({
+            orgName,
+            legalName: legalName.trim(),
+            registeredAddress: registeredAddress.trim(),
+            registrationId: registrationId.trim(),
+            payslipPaperSize,
+            payslipNotes: payslipNotes.trim(),
+            currency,
+            timezone,
+          });
           setError(result.ok ? "" : result.message);
           setSaved(result.ok ? "Organization settings saved." : "");
           if (result.ok) onDirty(false);
         }}>Save organization</Button>
         <Button variant="secondary" onClick={() => {
           setOrg(state.settings.orgName);
+          setLegalName(state.settings.legalName ?? "");
+          setRegisteredAddress(state.settings.registeredAddress ?? "");
+          setRegistrationId(state.settings.registrationId ?? "");
+          setPayslipPaperSize(state.settings.payslipPaperSize ?? "letter");
+          setPayslipNotes(state.settings.payslipNotes ?? "");
           setCurrency(state.settings.currency);
           setTimezone(state.settings.timezone || "Asia/Kolkata");
           setError("");

@@ -75,6 +75,9 @@ interface StoreValue {
     updatePayrollLine: (runId: string, employeeId: string, adjustment: number, reason: string, patch?: m.PayrollLinePatch) => Promise<Result>;
     importPayrollLines: (runId: string, lines: import("../types").PayrollLine[], fileName: string, warningCount: number) => Promise<Result>;
     advancePayroll: (runId: string, status: "in_review" | "finalized" | "paid", payment?: { reference?: string; note?: string }) => Promise<Result>;
+    generatePayslip: (runId: string, employeeId: string) => Promise<Result>;
+    generatePayslipBatch: (runId: string) => Promise<Result>;
+    publishPayslip: (slipId: string) => Promise<Result>;
     markNotification: (id: string) => Promise<void>;
     markAllNotifications: () => Promise<void>;
     updateSettings: (patch: Parameters<typeof m.updateSettings>[1]) => Promise<Result>;
@@ -314,6 +317,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updatePayrollLine: (runId, employeeId, adjustment, reason, patch) => run("updatePayrollLine", { runId, employeeId, adjustment, reason, patch }),
     importPayrollLines: (runId, lines, fileName, warningCount) => run("importPayrollLines", { runId, lines, fileName, warningCount }),
     advancePayroll: (runId, status, payment) => run("advancePayroll", { runId, status, payment }),
+    generatePayslip: async (runId, employeeId) => {
+      setBusy("payroll");
+      try {
+        const { generatePayslipPdf } = await import("../lib/payslip-api");
+        const outcome = await generatePayslipPdf(runId, employeeId);
+        if (outcome.state) adopt(outcome.state);
+        if (outcome.toast) pushToast(outcome.toast, outcome.tone ?? (outcome.result.ok ? "success" : "error"));
+        return outcome.result as Result;
+      } finally {
+        setBusy(null);
+      }
+    },
+    generatePayslipBatch: async (runId) => {
+      setBusy("payroll");
+      try {
+        const { generatePayslipBatch } = await import("../lib/payslip-api");
+        const outcome = await generatePayslipBatch(runId);
+        if (outcome.state) adopt(outcome.state);
+        if (outcome.toast) pushToast(outcome.toast, outcome.tone ?? (outcome.result.ok ? "success" : "error"));
+        return outcome.result as Result;
+      } finally {
+        setBusy(null);
+      }
+    },
+    publishPayslip: (slipId) => run("publishPayslip", { slipId }),
     markNotification: async (id) => { await run("markNotification", { id }); },
     markAllNotifications: async () => { await run("markAllNotifications"); },
     updateSettings: (patch) => run("updateSettings", patch),

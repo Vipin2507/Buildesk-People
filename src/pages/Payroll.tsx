@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, FolderOpen, Wallet } from "lucide-react";
+import { PayslipWorkbench } from "../components/payslip-preview";
 import { Banner, Button, DataTable, EmptyState, Field, Modal, NoAccess, PageHeader, Panel, Stat, StatusBadge, Tabs } from "../components/ui";
 import {
   PAYROLL_ASSUMPTION,
@@ -16,6 +17,7 @@ import {
   sourceLabel,
 } from "../domain/payroll";
 import { downloadText } from "../lib/download";
+import { downloadPayslipPdf } from "../lib/payslip-api";
 import { formatDate, formatDateTime, formatMoney, fullName, monthLabel, rangeLabel } from "../lib/format";
 import {
   PAYROLL_COLUMNS,
@@ -244,6 +246,7 @@ function RunDetail({ runId }: { runId: string }) {
   const [department, setDepartment] = useState("all");
   const [exceptionsOnly, setExceptionsOnly] = useState(false);
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  const [payslipEmployeeId, setPayslipEmployeeId] = useState<string | null>(null);
   const [revealBank, setRevealBank] = useState(false);
 
   const totals = useMemo(() => (run ? runTotals(run) : null), [run]);
@@ -325,6 +328,18 @@ function RunDetail({ runId }: { runId: string }) {
         >
           Export register
         </Button>
+        {(run.status === "finalized" || run.status === "paid") && (
+          <Button
+            variant="secondary"
+            disabled={busy === "payroll"}
+            onClick={async () => {
+              const result = await actions.generatePayslipBatch(run.id);
+              setError(result.ok ? "" : result.message);
+            }}
+          >
+            Generate all payslips
+          </Button>
+        )}
         {(run.status === "draft" || run.status === "calculated" || run.recalcRequired) && !locked && (
           <Button disabled={busy === "payroll"} onClick={async () => { const result = await actions.calculatePayroll(run.id); setError(result.ok ? "" : result.message); }}>
             Calculate
@@ -476,7 +491,12 @@ function RunDetail({ runId }: { runId: string }) {
                     </>
                   )}
                   <td>{line.exceptions.length ? `${line.exceptions.length}` : "—"}</td>
-                  <td><Button size="sm" variant="secondary" onClick={() => setDrawerId(line.employeeId)}>Open</Button></td>
+                  <td>
+                    <div className="actions">
+                      <Button size="sm" variant="secondary" onClick={() => setDrawerId(line.employeeId)}>Open</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setPayslipEmployeeId(line.employeeId)}>Payslip</Button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -512,11 +532,23 @@ function RunDetail({ runId }: { runId: string }) {
           locked={locked}
           revealBank={revealBank && showBank}
           onClose={() => setDrawerId(null)}
+          onPayslip={() => { setPayslipEmployeeId(drawerId); setDrawerId(null); }}
         />
       )}
 
+      <Modal open={Boolean(payslipEmployeeId)} title="Payslip" onClose={() => setPayslipEmployeeId(null)}>
+        {payslipEmployeeId && (
+          <PayslipWorkbench
+            run={run}
+            employeeId={payslipEmployeeId}
+            slip={state.payslips.find((item) => item.runId === run.id && item.employeeId === payslipEmployeeId && item.status !== "superseded") ?? null}
+            onClose={() => setPayslipEmployeeId(null)}
+          />
+        )}
+      </Modal>
+
       <Modal open={approveOpen} title="Approve payroll" onClose={() => setApproveOpen(false)}>
-        <p>Approving locks the run for {rangeLabel(run.periodStart, run.periodEnd)}, creates published payslips, and marks included expense claims as paid.</p>
+        <p>Approving locks the run for {rangeLabel(run.periodStart, run.periodEnd)}, creates payslip records ready to generate, and marks included expense claims as paid. Publish each PDF to employees after generation.</p>
         <p>Net payable: <strong>{formatMoney(totals.payable, state.settings.currency)}</strong> for {totals.employees} employees.</p>
         <Banner tone="warning">{PAYROLL_ASSUMPTION}</Banner>
         <label className="check">
@@ -571,12 +603,14 @@ function LineDrawer({
   locked,
   revealBank,
   onClose,
+  onPayslip,
 }: {
   run: PayrollRun;
   employeeId: string;
   locked: boolean;
   revealBank: boolean;
   onClose: () => void;
+  onPayslip: () => void;
 }) {
   const { state, actions } = useApp();
   const person = state.employees.find((item) => item.id === employeeId);
@@ -690,6 +724,9 @@ function LineDrawer({
           </div>
         </>
       )}
+      <div className="actions">
+        <Button variant="secondary" onClick={onPayslip}>Generate / preview payslip</Button>
+      </div>
     </Modal>
   );
 }
@@ -1065,15 +1102,13 @@ function PayrollModuleSettings() {
 }
 
 function Payslips() {
-  const { state, user, can } = useApp();
+  const { state, user, can, actions } = useApp();
   const [open, setOpen] = useState<Payslip | null>(null);
+  const [error, setError] = useState("");
   if (!user) return null;
   const manage = can("payroll.manage");
   const rows = state.payslips
-    .filter((item) => {
-      if (manage) return true;
-      return item.employeeId === user.id && item.published !== false;
-    })
+    .filter((item) => item.status !== "superseded")
     .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
 
   return (
@@ -1081,71 +1116,58 @@ function Payslips() {
       <h2>{manage ? "Payslips" : "My payslips"}</h2>
       <p className="muted">
         {manage
-          ? "Payslips are created when a run is approved. Employees only see their own published slips."
+          ? "Approve a run, generate PDF payslips, then publish them. Employees only see published slips."
           : "Only your published payslips are listed here."}
       </p>
+      {error && <Banner tone="error">{error}</Banner>}
       <DataTable
         caption="Payslips"
         rows={rows}
         rowKey={(row) => row.id}
         emptyTitle="No payslips yet"
-        emptyBody="Payslips appear after a payroll administrator approves a run."
+        emptyBody={manage ? "Payslip records appear after a run is approved." : "Published payslips will appear here."}
         columns={[
-          ...(manage ? [{ key: "who", header: "Employee", render: (row: Payslip) => fullName(state.employees.find((item) => item.id === row.employeeId)!) }] : []),
+          ...(manage ? [{ key: "who", header: "Employee", render: (row: Payslip) => {
+            const person = state.employees.find((item) => item.id === row.employeeId);
+            return person ? fullName(person) : row.employeeId;
+          } }] : []),
           { key: "period", header: "Period", render: (row: Payslip) => rangeLabel(row.periodStart, row.periodEnd) },
+          { key: "status", header: "Status", render: (row: Payslip) => (row.published ? "Published" : row.status === "generated" ? "Generated" : row.status === "ready" ? "Ready" : "—") },
           { key: "pay", header: "Net payable", render: (row: Payslip) => formatMoney(row.payable, state.settings.currency) },
-          { key: "open", header: "Action", render: (row: Payslip) => <Button size="sm" variant="secondary" onClick={() => setOpen(row)}>View</Button> },
+          { key: "open", header: "Action", render: (row: Payslip) => (
+            <div className="actions">
+              <Button size="sm" variant="secondary" onClick={() => setOpen(row)}>View</Button>
+              {row.documentKey && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    const person = state.employees.find((item) => item.id === row.employeeId);
+                    const filename = `Payslip_${person?.employeeCode ?? "employee"}_${row.periodStart.slice(0, 7)}.pdf`;
+                    const result = await downloadPayslipPdf(row.id, filename);
+                    setError(result.ok ? "" : result.message);
+                  }}
+                >
+                  Download
+                </Button>
+              )}
+              {manage && row.status === "generated" && !row.published && (
+                <Button size="sm" onClick={async () => {
+                  const result = await actions.publishPayslip(row.id);
+                  setError(result.ok ? "" : result.message);
+                }}>Publish</Button>
+              )}
+            </div>
+          ) },
         ]}
       />
       <Modal open={Boolean(open)} title="Payslip" onClose={() => setOpen(null)}>
-        {open && <PayslipView slip={open} />}
+        {open && (() => {
+          const run = state.payrollRuns.find((item) => item.id === open.runId);
+          if (!run) return <Banner tone="error">The payroll run for this payslip is not available.</Banner>;
+          return <PayslipWorkbench run={run} employeeId={open.employeeId} slip={open} onClose={() => setOpen(null)} />;
+        })()}
       </Modal>
     </section>
-  );
-}
-
-function PayslipView({ slip }: { slip: Payslip }) {
-  const { state, user, can } = useApp();
-  if (!user) return null;
-  if (!can("payroll.manage") && slip.employeeId !== user.id) {
-    return <Banner tone="error">You can only open your own payslip.</Banner>;
-  }
-  const person = state.employees.find((item) => item.id === slip.employeeId);
-  const text = [
-    "Buildesk People — Payslip (text preview; PDF generation not configured)",
-    person ? fullName(person) : "",
-    rangeLabel(slip.periodStart, slip.periodEnd),
-    `Monthly gross: ${formatMoney(slip.monthlyGross, state.settings.currency)}`,
-    `Overtime: ${formatMoney(slip.overtime ?? 0, state.settings.currency)}`,
-    `Extras: ${formatMoney(slip.extras ?? 0, state.settings.currency)}`,
-    `Arrears: ${formatMoney(slip.arrears ?? 0, state.settings.currency)}`,
-    `Manual adjustment: ${formatMoney(slip.adjustment, state.settings.currency)}${slip.adjustmentReason ? ` (${slip.adjustmentReason})` : ""}`,
-    `Expense reimbursements: ${formatMoney(slip.reimbursement, state.settings.currency)}`,
-    `Gross earnings: ${formatMoney(slip.grossEarnings ?? slip.payable, state.settings.currency)}`,
-    `PF: ${formatMoney(slip.pf ?? 0, state.settings.currency)}`,
-    `ESIC: ${formatMoney(slip.esic ?? 0, state.settings.currency)}`,
-    `Penalties: ${formatMoney(slip.penalties ?? 0, state.settings.currency)}`,
-    `Loan/advance: ${formatMoney(slip.loan ?? 0, state.settings.currency)}`,
-    `Other deductions: ${formatMoney(slip.otherDeductions ?? 0, state.settings.currency)}`,
-    `Total deductions: ${formatMoney(slip.totalDeductions ?? 0, state.settings.currency)}`,
-    `Net payable: ${formatMoney(slip.payable, state.settings.currency)}`,
-    "",
-    PAYROLL_ASSUMPTION,
-  ].join("\n");
-
-  return (
-    <div>
-      <dl className="dl">
-        <dt>Employee</dt><dd>{person ? fullName(person) : "—"}</dd>
-        <dt>Period</dt><dd>{rangeLabel(slip.periodStart, slip.periodEnd)}</dd>
-        <dt>Monthly gross</dt><dd>{formatMoney(slip.monthlyGross, state.settings.currency)}</dd>
-        <dt>Gross earnings</dt><dd>{formatMoney(slip.grossEarnings ?? slip.payable, state.settings.currency)}</dd>
-        <dt>Total deductions</dt><dd>{formatMoney(slip.totalDeductions ?? 0, state.settings.currency)}</dd>
-        <dt>Net payable</dt><dd>{formatMoney(slip.payable, state.settings.currency)}</dd>
-      </dl>
-      <Banner tone="info">Demo text payslip preview. PDF generation is not configured in this build.</Banner>
-      <Banner tone="info">{PAYROLL_ASSUMPTION}</Banner>
-      <Button onClick={() => downloadText(`payslip-${slip.periodStart}-${slip.employeeId}.txt`, text)}>Download payslip</Button>
-    </div>
   );
 }

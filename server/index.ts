@@ -16,7 +16,11 @@ import { afterActionAutomation } from "./automation-hooks.ts";
 import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
+import { renderPayslipPdf } from "./payslip-pdf.ts";
+import { makeDocumentKey, readPayslipPdf, writePayslipPdf } from "./payslips-store.ts";
 import { presentWorkspace } from "./present.ts";
+import { buildPayslipDto } from "../src/domain/payslip.ts";
+import { generatePayslip as generatePayslipMutation, publishPayslip as publishPayslipMutation, recordPayslipDownload } from "../src/store/mutations.ts";
 import {
   appendAutomationLog,
   buildN8nWebhookUrl,
@@ -447,6 +451,212 @@ const server = createServer(async (request, response) => {
       const saved = { ...outcome.state, currentUserId: null };
       writeWorkspace(saved);
       send(response, 200, { ok: true, placeLabel, state: presentWorkspace(saved, accountId) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/payslips/preview") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const body = await readBody(request);
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "payroll.manage")) {
+        send(response, 403, { ok: false, message: "Payslip preview is limited to payroll administrators." });
+        return;
+      }
+      const runId = typeof body.runId === "string" ? body.runId : "";
+      const employeeId = typeof body.employeeId === "string" ? body.employeeId : "";
+      const run = state.payrollRuns.find((item) => item.id === runId);
+      if (!run) {
+        send(response, 404, { ok: false, message: "That payroll run was not found." });
+        return;
+      }
+      const built = buildPayslipDto(state, run, employeeId, { official: false, requireValid: false });
+      if (!built.ok) {
+        send(response, 400, { ok: false, message: built.message, missing: built.missing ?? [] });
+        return;
+      }
+      const approved = run.status === "finalized" || run.status === "paid";
+      const dto = {
+        ...built.dto,
+        official: approved && built.validation.ok,
+        watermark: approved && built.validation.ok ? null : "INTERNAL PREVIEW — NOT AN OFFICIAL PAYSLIP",
+      };
+      const bytes = await renderPayslipPdf(dto);
+      response.writeHead(200, {
+        "content-type": "application/pdf",
+        "content-disposition": `inline; filename="${built.dto.filename}"`,
+        "cache-control": "no-store",
+        ...SECURITY_HEADERS,
+      });
+      response.end(bytes);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/payslips/generate") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const body = await readBody(request);
+      const before = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(before);
+      if (!viewer || !hasPermission(before, viewer, "payroll.manage")) {
+        send(response, 403, { ok: false, message: "Payslip generation is limited to payroll administrators." });
+        return;
+      }
+      const runId = typeof body.runId === "string" ? body.runId : "";
+      const employeeId = typeof body.employeeId === "string" ? body.employeeId : "";
+      const run = before.payrollRuns.find((item) => item.id === runId);
+      if (!run) {
+        send(response, 404, { ok: false, message: "That payroll run was not found." });
+        return;
+      }
+      const built = buildPayslipDto(before, run, employeeId, { official: true });
+      if (!built.ok) {
+        send(response, 400, { ok: false, message: built.message, missing: built.missing ?? [] });
+        return;
+      }
+      const existing = before.payslips.find((item) => item.runId === runId && item.employeeId === employeeId && item.status !== "superseded");
+      const version = (existing?.version ?? 0) + 1;
+      const slipId = existing?.id ?? `slip_${runId}_${employeeId}`;
+      const documentKey = makeDocumentKey(slipId, version);
+      const bytes = await renderPayslipPdf({ ...built.dto, slipId, version, official: true, watermark: null });
+      const writeError = writePayslipPdf(documentKey, bytes);
+      if (writeError) {
+        send(response, 500, { ok: false, message: writeError });
+        return;
+      }
+      const outcome = generatePayslipMutation(before, { runId, employeeId, documentKey, version });
+      if (!outcome.result.ok) {
+        send(response, 200, { ok: false, result: outcome.result, toast: outcome.toast, tone: "error" });
+        return;
+      }
+      const saved = { ...outcome.state, currentUserId: null };
+      writeWorkspace(saved);
+      send(response, 200, {
+        ok: true,
+        result: outcome.result,
+        toast: outcome.toast,
+        tone: "success",
+        slipId,
+        version,
+        filename: built.dto.filename,
+        state: presentWorkspace(saved, accountId),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/payslips/generate-batch") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const body = await readBody(request);
+      let working = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(working);
+      if (!viewer || !hasPermission(working, viewer, "payroll.manage")) {
+        send(response, 403, { ok: false, message: "Batch payslip generation is limited to payroll administrators." });
+        return;
+      }
+      const runId = typeof body.runId === "string" ? body.runId : "";
+      const run = working.payrollRuns.find((item) => item.id === runId);
+      if (!run) {
+        send(response, 404, { ok: false, message: "That payroll run was not found." });
+        return;
+      }
+      const failures: Array<{ employeeId: string; message: string }> = [];
+      let generated = 0;
+      for (const line of run.lines) {
+        const built = buildPayslipDto(working, run, line.employeeId, { official: true });
+        if (!built.ok) {
+          failures.push({ employeeId: line.employeeId, message: built.message });
+          continue;
+        }
+        const existing = working.payslips.find((item) => item.runId === runId && item.employeeId === line.employeeId && item.status !== "superseded");
+        const version = (existing?.version ?? 0) + 1;
+        const slipId = existing?.id ?? `slip_${runId}_${line.employeeId}`;
+        const documentKey = makeDocumentKey(slipId, version);
+        const bytes = await renderPayslipPdf({ ...built.dto, slipId, version, official: true, watermark: null });
+        const writeError = writePayslipPdf(documentKey, bytes);
+        if (writeError) {
+          failures.push({ employeeId: line.employeeId, message: writeError });
+          continue;
+        }
+        const outcome = generatePayslipMutation(working, { runId, employeeId: line.employeeId, documentKey, version });
+        if (!outcome.result.ok) {
+          failures.push({ employeeId: line.employeeId, message: outcome.result.message });
+          continue;
+        }
+        working = { ...outcome.state, currentUserId: accountId };
+        generated += 1;
+      }
+      const saved = { ...working, currentUserId: null };
+      writeWorkspace(saved);
+      send(response, 200, {
+        ok: failures.length === 0,
+        generated,
+        failed: failures.length,
+        failures,
+        toast: failures.length ? `Generated ${generated}; ${failures.length} need fixes.` : `Generated ${generated} payslip PDFs.`,
+        tone: failures.length ? "error" : "success",
+        state: presentWorkspace(saved, accountId),
+      });
+      return;
+    }
+
+    const payslipMatch = url.pathname.match(/^\/api\/payslips\/([^/]+)\/pdf$/i);
+    if (request.method === "GET" && payslipMatch) {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const slipId = decodeURIComponent(payslipMatch[1]);
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      const slip = state.payslips.find((item) => item.id === slipId);
+      if (!viewer || !slip) {
+        send(response, 404, { ok: false, message: "That payslip was not found." });
+        return;
+      }
+      const manage = hasPermission(state, viewer, "payroll.manage");
+      const selfOk = slip.employeeId === viewer.id && slip.published === true && hasPermission(state, viewer, "payroll.self");
+      if (!manage && !selfOk) {
+        send(response, 403, { ok: false, message: "You don't have access to that payslip." });
+        return;
+      }
+      if (!slip.documentKey) {
+        send(response, 404, { ok: false, message: "That payslip PDF has not been generated yet." });
+        return;
+      }
+      const bytes = readPayslipPdf(slip.documentKey);
+      if (!bytes) {
+        send(response, 404, { ok: false, message: "That payslip file was not found." });
+        return;
+      }
+      const audited = recordPayslipDownload(state, slipId);
+      if (audited.result.ok) {
+        writeWorkspace({ ...audited.state, currentUserId: null });
+      }
+      const code = state.employees.find((item) => item.id === slip.employeeId)?.employeeCode ?? "employee";
+      const filename = `Payslip_${code}_${slip.periodStart.slice(0, 7)}.pdf`;
+      response.writeHead(200, {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="${filename}"`,
+        "cache-control": "no-store",
+        ...SECURITY_HEADERS,
+      });
+      response.end(bytes);
       return;
     }
 

@@ -210,11 +210,25 @@ export interface LeaveType {
   active?: boolean;
 }
 
+export type PayslipPaperSize = "letter" | "a4";
+
 export interface OrgSettings {
   orgName: string;
   currency: string;
   /** Company timezone label for display. The office punch clock remains Asia/Kolkata in this build. */
   timezone?: string;
+  /** Legal name printed on payslips. Falls back to orgName when empty. */
+  legalName?: string;
+  /** Registered office address printed under the company name on payslips. */
+  registeredAddress?: string;
+  /** CIN or other registration identifier printed on payslips when configured. */
+  registrationId?: string;
+  /** Payslip page size. Defaults to US Letter to match the reference template. */
+  payslipPaperSize?: PayslipPaperSize;
+  /** Template id stamped on generated payslip files. */
+  payslipTemplateVersion?: string;
+  /** Optional note printed in the payslip note area. */
+  payslipNotes?: string;
   workStart: string;
   graceMinutes: number;
   weeklyOff: number[];
@@ -533,6 +547,16 @@ export interface PayrollRun {
   importHistory?: PayrollImportRecord[];
 }
 
+export interface PayslipComponent {
+  key: string;
+  label: string;
+  amount: number;
+  kind: "earning" | "deduction";
+}
+
+/** ready = approved run snapshot; generated = PDF created; published = visible to employee; superseded = replaced version. */
+export type PayslipStatus = "ready" | "generated" | "published" | "superseded";
+
 export interface Payslip {
   id: string;
   runId: string;
@@ -549,7 +573,11 @@ export interface Payslip {
   unpaidLeaveDays: number;
   absentDays: number;
   generatedAt: string;
+  /** When true, the employee with payroll.self may view/download this slip. */
   published?: boolean;
+  publishedAt?: string | null;
+  publishedBy?: string | null;
+  generatedBy?: string | null;
   overtime?: number;
   extras?: number;
   arrears?: number;
@@ -560,6 +588,31 @@ export interface Payslip {
   otherDeductions?: number;
   totalDeductions?: number;
   grossEarnings?: number;
+  paidDays?: number;
+  lopDays?: number;
+  status?: PayslipStatus;
+  version?: number;
+  templateVersion?: string;
+  /** Opaque storage key for the PDF binary under data/payslips. */
+  documentKey?: string | null;
+  earningComponents?: PayslipComponent[];
+  deductionComponents?: PayslipComponent[];
+  companySnapshot?: {
+    legalName: string;
+    address: string;
+    registrationId: string;
+    currency: string;
+    paperSize?: PayslipPaperSize;
+    notes?: string;
+  };
+  employeeSnapshot?: {
+    name: string;
+    employeeCode: string;
+    designation: string;
+    department: string;
+    location: string;
+  };
+  notes?: string;
 }
 
 export interface AppNotification {

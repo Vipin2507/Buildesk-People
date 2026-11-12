@@ -5,6 +5,7 @@ import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { normalizeHoliday } from "../domain/holidays";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
+import { snapshotPayslipRecord, validatePayslipData, buildPayslipDto, PAYSLIP_TEMPLATE_VERSION } from "../domain/payslip";
 import { createsCycle } from "../domain/org";
 import { ensureAutomation, normalizeAutomationConfig } from "../domain/automation";
 import { createMasterValue, defaultMasters, mastersInUse } from "../domain/masters";
@@ -1311,7 +1312,10 @@ export function advancePayroll(
         : item,
     );
     payslips = [
-      ...run.lines.map((line) => payslip(run, normalizeLine(line, state.settings), at)),
+      ...run.lines.map((line) => {
+        const existing = state.payslips.find((item) => item.runId === run.id && item.employeeId === line.employeeId && item.status !== "superseded");
+        return snapshotPayslipRecord(run, line, at, state, existing ? { ...existing, published: false, publishedAt: null, status: "ready" } : null);
+      }),
       ...state.payslips.filter((item) => item.runId !== run.id),
     ];
   }
@@ -1333,52 +1337,134 @@ export function advancePayroll(
     status === "in_review"
       ? `Sent payroll for ${rangeLabel(run.periodStart, run.periodEnd)} to review.`
       : status === "finalized"
-        ? `Approved payroll for ${rangeLabel(run.periodStart, run.periodEnd)}.`
+        ? `Approved payroll for ${rangeLabel(run.periodStart, run.periodEnd)}. Payslip records are ready to generate.`
         : `Marked payroll paid for ${rangeLabel(run.periodStart, run.periodEnd)}${payment?.reference ? ` (ref ${payment.reference})` : ""}.`;
   const notes: Array<Omit<AppNotification, "id" | "read" | "createdAt">> =
     status === "in_review"
       ? []
-      : run.lines.map((line) => ({
-          userId: line.employeeId,
-          title: status === "finalized" ? "Payslip ready" : "Payroll marked paid",
-          body: status === "finalized" ? `Your payslip for ${rangeLabel(run.periodStart, run.periodEnd)} is ready.` : `Payroll for ${rangeLabel(run.periodStart, run.periodEnd)} was marked paid.`,
-          href: "/payroll",
-          kind: "payroll" as const,
-        }));
-  const toast = status === "in_review" ? "Run sent for review." : status === "finalized" ? "Payroll approved and payslips created." : "Payroll marked paid.";
+      : status === "paid"
+        ? run.lines.map((line) => ({
+            userId: line.employeeId,
+            title: "Payroll marked paid",
+            body: `Payroll for ${rangeLabel(run.periodStart, run.periodEnd)} was marked paid.`,
+            href: "/payroll",
+            kind: "payroll" as const,
+          }))
+        : [];
+  const toast = status === "in_review" ? "Run sent for review." : status === "finalized" ? "Payroll approved. Generate and publish payslips next." : "Payroll marked paid.";
   return ok(pushNotes(pushAudit({ ...state, payrollRuns, expenses, payslips }, actor.id, "payroll", summary, "payroll"), notes), toast);
 }
 
-function payslip(run: PayrollRun, line: PayrollRun["lines"][number], at: string): Payslip {
-  const normalized = normalizeLine(line);
-  return {
-    id: `slip_${run.id}_${line.employeeId}`,
-    runId: run.id,
-    employeeId: line.employeeId,
-    periodStart: run.periodStart,
-    periodEnd: run.periodEnd,
-    monthlyGross: normalized.monthlyGross,
-    adjustment: normalized.adjustment,
-    adjustmentReason: normalized.adjustmentReason,
-    reimbursement: normalized.reimbursement,
-    payable: normalized.payable,
-    presentDays: normalized.presentDays,
-    leaveDays: normalized.leaveDays,
-    unpaidLeaveDays: normalized.unpaidLeaveDays,
-    absentDays: normalized.absentDays,
+export function generatePayslip(
+  state: AppState,
+  input: { runId: string; employeeId: string; documentKey: string; version: number },
+): Outcome {
+  const actor = requireUser(state, "payroll.manage");
+  if (!isEmployee(actor)) return actor;
+  const run = state.payrollRuns.find((item) => item.id === input.runId);
+  if (!run) return fail(state, "That payroll run was not found.", true);
+  if (run.status !== "finalized" && run.status !== "paid") {
+    return fail(state, "Approve the payroll run before generating an official payslip.");
+  }
+  const built = buildPayslipDto(state, run, input.employeeId, { official: true });
+  if (!built.ok) return fail(state, built.message);
+  const existing = state.payslips.find((item) => item.runId === run.id && item.employeeId === input.employeeId && item.status !== "superseded");
+  const at = nowIso();
+  const next = snapshotPayslipRecord(run, built.line, at, state, existing ?? null);
+  const slip: Payslip = {
+    ...next,
+    status: "generated",
+    version: input.version,
     generatedAt: at,
-    published: true,
-    overtime: normalized.overtime,
-    extras: normalized.extras,
-    arrears: normalized.arrears,
-    pf: normalized.pf,
-    esic: normalized.esic,
-    penalties: normalized.penalties,
-    loan: normalized.loan,
-    otherDeductions: normalized.otherDeductions,
-    totalDeductions: normalized.totalDeductions,
-    grossEarnings: normalized.grossEarnings,
+    generatedBy: actor.id,
+    documentKey: input.documentKey,
+    templateVersion: built.dto.templateVersion || PAYSLIP_TEMPLATE_VERSION,
+    published: false,
+    publishedAt: null,
+    publishedBy: null,
   };
+  const others = state.payslips.filter((item) => !(item.runId === run.id && item.employeeId === input.employeeId && item.status !== "superseded"));
+  return ok(
+    pushAudit({ ...state, payslips: [...others, slip] }, actor.id, "payroll", `Generated payslip v${slip.version} for ${built.person.employeeCode} (${rangeLabel(run.periodStart, run.periodEnd)}).`, "payroll"),
+    "Payslip PDF generated.",
+  );
+}
+
+export function publishPayslip(state: AppState, slipId: string): Outcome {
+  const actor = requireUser(state, "payroll.manage");
+  if (!isEmployee(actor)) return actor;
+  const slip = state.payslips.find((item) => item.id === slipId);
+  if (!slip) return fail(state, "That payslip was not found.", true);
+  if (slip.status === "superseded") return fail(state, "That payslip version was superseded.");
+  if (slip.status !== "generated" && slip.status !== "published") {
+    return fail(state, "Generate the payslip PDF before publishing it to the employee.");
+  }
+  if (!slip.documentKey) return fail(state, "Generate the payslip PDF before publishing.");
+  const run = state.payrollRuns.find((item) => item.id === slip.runId);
+  if (!run || (run.status !== "finalized" && run.status !== "paid")) {
+    return fail(state, "Only approved payroll can be published as an official payslip.");
+  }
+  const person = state.employees.find((item) => item.id === slip.employeeId);
+  if (!person) return fail(state, "That employee was not found.", true);
+  const line = run.lines.find((item) => item.employeeId === slip.employeeId);
+  if (!line) return fail(state, "That employee is not on the approved run.");
+  const validation = validatePayslipData(state, run, person, line);
+  if (!validation.ok) return fail(state, `Cannot publish. Fix: ${validation.missing.join("; ")}.`);
+
+  const conflict = state.payslips.find(
+    (item) =>
+      item.id !== slip.id
+      && item.employeeId === slip.employeeId
+      && item.periodStart === slip.periodStart
+      && item.periodEnd === slip.periodEnd
+      && item.published
+      && item.status !== "superseded",
+  );
+  const at = nowIso();
+  const payslips = state.payslips.map((item) => {
+    if (conflict && item.id === conflict.id) {
+      return { ...item, published: false, status: "superseded" as const };
+    }
+    if (item.id === slip.id) {
+      return {
+        ...item,
+        status: "published" as const,
+        published: true,
+        publishedAt: at,
+        publishedBy: actor.id,
+      };
+    }
+    return item;
+  });
+  const notes: Array<Omit<AppNotification, "id" | "read" | "createdAt">> = [{
+    userId: slip.employeeId,
+    title: "Payslip published",
+    body: `Your payslip for ${rangeLabel(slip.periodStart, slip.periodEnd)} is available to download.`,
+    href: "/payroll",
+    kind: "payroll",
+  }];
+  return ok(
+    pushNotes(
+      pushAudit({ ...state, payslips }, actor.id, "payroll", `Published payslip for ${person.employeeCode} (${rangeLabel(slip.periodStart, slip.periodEnd)}).`, "payroll"),
+      notes,
+    ),
+    "Payslip published to the employee.",
+  );
+}
+
+export function recordPayslipDownload(state: AppState, slipId: string): Outcome {
+  const actor = user(state);
+  if (!actor) return fail(state, "Sign in to continue.", true);
+  const slip = state.payslips.find((item) => item.id === slipId);
+  if (!slip) return fail(state, "That payslip was not found.", true);
+  const manage = hasPermission(state, actor, "payroll.manage");
+  if (!manage && !(slip.employeeId === actor.id && slip.published && hasPermission(state, actor, "payroll.self"))) {
+    return fail(state, "You don't have access to that payslip.", true);
+  }
+  const code = state.employees.find((item) => item.id === slip.employeeId)?.employeeCode ?? slip.employeeId;
+  return ok(
+    pushAudit(state, actor.id, "payroll", `Downloaded payslip for ${code} (${rangeLabel(slip.periodStart, slip.periodEnd)}).`, "payroll"),
+  );
 }
 
 export function markNotification(state: AppState, id: string, read = true): AppState {

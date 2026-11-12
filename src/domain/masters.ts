@@ -86,17 +86,19 @@ export function defaultMasters(): MastersCatalog {
       item("nc_event", "Events", "event"),
     ],
     payroll_earnings: [
-      item("pe_basic", "Basic"),
-      item("pe_hra", "HRA"),
-      item("pe_special", "Special allowance"),
-      item("pe_overtime", "Overtime"),
+      item("pe_monthly_gross", "Monthly gross", "monthly_gross", "Configured monthly package from the employee record."),
+      item("pe_overtime", "Overtime", "overtime"),
+      item("pe_extras", "Extras", "extras"),
+      item("pe_arrears", "Arrears", "arrears"),
+      item("pe_reimbursement", "Reimbursement", "reimbursement"),
+      item("pe_adjustment", "Adjustment", "adjustment"),
     ],
     payroll_deductions: [
-      item("pd_pf", "PF"),
-      item("pd_esic", "ESIC"),
-      item("pd_loan", "Loan / advance"),
-      item("pd_penalty", "Penalty"),
-      item("pd_other", "Other deduction"),
+      item("pd_pf", "PF", "pf"),
+      item("pd_esic", "ESIC", "esic"),
+      item("pd_loan", "Loan / advance", "loan"),
+      item("pd_penalty", "Penalties", "penalty"),
+      item("pd_other", "Other deductions", "other"),
     ],
   };
 }

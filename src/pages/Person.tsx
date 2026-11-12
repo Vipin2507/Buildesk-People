@@ -167,7 +167,11 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
   }
 
   if (section === "salary") {
-    const payslips = state.payslips.filter((item) => item.employeeId === employee.id);
+    const payslips = state.payslips.filter((item) => {
+      if (item.employeeId !== employee.id || item.status === "superseded") return false;
+      if (can("payroll.manage")) return true;
+      return item.published === true;
+    });
     const showGross = canSeeCompensation(state, user);
     return (
       <section className="panel">
@@ -192,9 +196,22 @@ function Section({ employee, section }: { employee: Employee; section: ProfileSe
           <div key={item.id} className="notice">
             <div>
               <strong>{formatDate(item.periodStart)} – {formatDate(item.periodEnd)}</strong>
-              <div className="muted">Payable {formatMoney(item.payable, state.settings.currency)} · present {item.presentDays} · unpaid leave {item.unpaidLeaveDays}</div>
+              <div className="muted">
+                Payable {formatMoney(item.payable, state.settings.currency)}
+                {" · "}{item.published ? "Published" : item.status === "generated" ? "Generated" : "Ready"}
+                {" · "}present {item.presentDays} · unpaid leave {item.unpaidLeaveDays}
+              </div>
             </div>
-            <Button variant="secondary" onClick={() => downloadText(`payslip-${employee.employeeCode}-${item.periodStart}.txt`, `Payslip ${item.periodStart} to ${item.periodEnd}\nPayable ${formatMoney(item.payable, state.settings.currency)}\nStatutory deductions are not calculated.`)}>Download</Button>
+            <Button
+              variant="secondary"
+              disabled={!item.documentKey || (!item.published && !can("payroll.manage"))}
+              onClick={async () => {
+                const { downloadPayslipPdf } = await import("../lib/payslip-api");
+                await downloadPayslipPdf(item.id, `Payslip_${employee.employeeCode}_${item.periodStart.slice(0, 7)}.pdf`);
+              }}
+            >
+              Download PDF
+            </Button>
           </div>
         ))}
       </section>

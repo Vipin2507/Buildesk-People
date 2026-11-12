@@ -90,7 +90,13 @@ export function presentWorkspace(source: AppState, accountId: string): AppState 
       : hasPermission(state, viewer, "settings.org")
         ? state.payrollRuns.map(redactPayrollRun)
         : [],
-    payslips: state.payslips.filter((item) => hasPermission(state, viewer, "payroll.manage") || (item.employeeId === self && hasPermission(state, viewer, "payroll.self"))),
+    payslips: state.payslips.filter((item) => {
+      if (hasPermission(state, viewer, "payroll.manage")) return item.status !== "superseded";
+      return item.employeeId === self
+        && item.published === true
+        && item.status !== "superseded"
+        && hasPermission(state, viewer, "payroll.self");
+    }),
     notifications: state.notifications.filter((item) => ids.has(item.userId)),
     audits: hasPermission(state, viewer, "audit.view")
       ? state.audits.filter((item) => {

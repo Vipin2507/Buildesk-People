@@ -1205,6 +1205,41 @@ img.avatar { object-fit: cover; display: block; }
 .stack-lg { display: flex; flex-direction: column; gap: 16px; }
 .payroll-register { margin-top: 8px; }
 .payroll-register table.data { min-width: 1100px; }
+
+.payslip-workbench { display: grid; gap: 12px; }
+.payslip-sheet {
+  background: #fff;
+  color: #1b2a4a;
+  border: 1px solid #cfd6e0;
+  padding: 16px;
+  border-radius: 8px;
+}
+.payslip-sheet-head { text-align: center; margin-bottom: 12px; }
+.payslip-sheet-head h3 {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.payslip-sheet-head p { margin: 2px 0; color: #445; font-size: 0.9rem; }
+.payslip-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.payslip-cols table.data { min-width: 0; }
+.payslip-net {
+  margin-top: 12px;
+  padding: 12px;
+  background: #dceaf7;
+  border: 1px solid #222;
+}
+.payslip-pdf-frame {
+  width: 100%;
+  min-height: 480px;
+  border: 1px solid var(--border, #cfd6e0);
+  border-radius: 8px;
+  background: #fff;
+}
+@media (max-width: 720px) {
+  .payslip-cols { grid-template-columns: 1fr; }
+}
 .payroll-cards { display: none; gap: 10px; margin-top: 12px; }
 .panel.compact { padding: 12px 14px; }
 .history-folder { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
