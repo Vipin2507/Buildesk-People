@@ -141,6 +141,20 @@ export function formatDate(iso: string): string {
   }).format(parseISODate(iso));
 }
 
+/** Month and day only — for annual holidays that repeat every year. */
+export function formatMonthDay(iso: string): string {
+  if (!iso) return "—";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "long",
+  }).format(parseISODate(iso));
+}
+
+export function formatHolidayDate(iso: string, recurrence?: "once" | "annual"): string {
+  if (recurrence === "annual") return `Every year on ${formatMonthDay(iso)}`;
+  return formatDate(iso);
+}
+
 export function formatDateLong(iso: string): string {
   if (!iso) return "—";
   return new Intl.DateTimeFormat("en-IN", {

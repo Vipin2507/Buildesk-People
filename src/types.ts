@@ -327,8 +327,11 @@ export interface CompOffGrant {
 export interface Holiday {
   id: string;
   name: string;
+  /** YYYY-MM-DD. For annual recurrence, month-day repeats every year. */
   date: string;
   locationId: string | "all";
+  /** once = that calendar date only; annual = same month-day every year (fixed national days). */
+  recurrence?: "once" | "annual";
 }
 
 export interface CompanyEvent {

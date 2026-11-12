@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Banner, Button, DatePicker, DecisionDialog, EmptyState, Field, StatusBadge } from "../../components/ui";
 import { MASTER_CATEGORIES, mastersInUse } from "../../domain/masters";
-import { formatDate, formatDateTime, fullName } from "../../lib/format";
+import { formatDate, formatDateTime, formatHolidayDate, fullName } from "../../lib/format";
 import { useApp } from "../../store/store";
 import type { CompanyEvent, Holiday, LeaveType, MasterKind } from "../../types";
 
@@ -326,24 +326,27 @@ function CategoriesMaster({ kind, label, description }: { kind: "expense" | "tic
 
 function HolidaysMaster({ label, description }: { label: string; description: string }) {
   const { state, actions, can } = useApp();
-  const [holiday, setHoliday] = useState<Holiday>({ id: "", name: "", date: "", locationId: "all" });
+  const emptyHoliday: Holiday = { id: "", name: "", date: "", locationId: "all", recurrence: "once" };
+  const [holiday, setHoliday] = useState<Holiday>(emptyHoliday);
   const [error, setError] = useState("");
   const [removeId, setRemoveId] = useState<string | null>(null);
   if (!can("leave.manage")) return <Banner tone="info">Holiday masters require leave.manage.</Banner>;
   return (
     <div>
       <MasterHeader label={label} description={description} />
-      <Banner tone="info">Do not invent national holiday dates. Add only holidays your company configures.</Banner>
+      <Banner tone="info">
+        Fixed days can repeat every year. Lunar festivals stay one-time for the year you configure — do not invent next year’s festival dates.
+      </Banner>
       {error && <Banner tone="error">{error}</Banner>}
       {state.holidays.length === 0 && <EmptyState title="No holidays" body="Add company holidays for the offices that observe them." />}
-      {state.holidays.sort((a, b) => a.date.localeCompare(b.date)).map((item) => (
+      {state.holidays.sort((a, b) => a.date.slice(5).localeCompare(b.date.slice(5)) || a.date.localeCompare(b.date)).map((item) => (
         <div key={item.id} className="notice split">
           <div>
             <strong>{item.name}</strong>
-            <div className="muted">{formatDate(item.date)} · {item.locationId === "all" ? "All offices" : state.locations.find((loc) => loc.id === item.locationId)?.name}</div>
+            <div className="muted">{formatHolidayDate(item.date, item.recurrence)} · {item.locationId === "all" ? "All offices" : state.locations.find((loc) => loc.id === item.locationId)?.name}</div>
           </div>
           <div className="actions">
-            <Button size="sm" variant="secondary" onClick={() => setHoliday(item)}>Edit</Button>
+            <Button size="sm" variant="secondary" onClick={() => setHoliday({ ...item, recurrence: item.recurrence ?? "once" })}>Edit</Button>
             <Button size="sm" variant="ghost" onClick={() => setRemoveId(item.id)}>Remove</Button>
           </div>
         </div>
@@ -351,6 +354,15 @@ function HolidaysMaster({ label, description }: { label: string; description: st
       <h4>{holiday.id ? "Edit holiday" : "Add holiday"}</h4>
       <Field label="Name"><input value={holiday.name} onChange={(event) => setHoliday({ ...holiday, name: event.target.value })} /></Field>
       <Field label="Date"><DatePicker value={holiday.date} onChange={(date) => setHoliday({ ...holiday, date })} /></Field>
+      <Field label="Repeats">
+        <select
+          value={holiday.recurrence ?? "once"}
+          onChange={(event) => setHoliday({ ...holiday, recurrence: event.target.value as Holiday["recurrence"] })}
+        >
+          <option value="once">One-time date (this year only)</option>
+          <option value="annual">Every year on this month and day</option>
+        </select>
+      </Field>
       <Field label="Applies to">
         <select value={holiday.locationId} onChange={(event) => setHoliday({ ...holiday, locationId: event.target.value })}>
           <option value="all">All offices</option>
@@ -361,9 +373,9 @@ function HolidaysMaster({ label, description }: { label: string; description: st
         <Button onClick={async () => {
           const result = await actions.saveHoliday(holiday);
           setError(result.ok ? "" : result.message);
-          if (result.ok) setHoliday({ id: "", name: "", date: "", locationId: "all" });
+          if (result.ok) setHoliday(emptyHoliday);
         }}>{holiday.id ? "Update holiday" : "Save holiday"}</Button>
-        {holiday.id && <Button variant="secondary" onClick={() => setHoliday({ id: "", name: "", date: "", locationId: "all" })}>Cancel</Button>}
+        {holiday.id && <Button variant="secondary" onClick={() => setHoliday(emptyHoliday)}>Cancel</Button>}
       </div>
       <DecisionDialog
         open={Boolean(removeId)}

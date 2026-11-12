@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { CalendarDays, Clock, Laptop, Receipt, Ticket, Users, Wallet } from "lucide-react";
 import { MonthCalendar } from "../components/calendar";
 import { ClockCard } from "../components/clock";
+import { MarkHolidayControls } from "../components/mark-holiday";
 import { Banner, Button, DecisionDialog, EmptyState, PageHeader, Panel, PersonLink, Stat, StatusBadge } from "../components/ui";
 import { upcomingFeed } from "../domain/feed";
 import { PAYROLL_ASSUMPTION } from "../domain/payroll";
@@ -387,6 +388,10 @@ function DayList({ date }: { date: string }) {
       )}
 
       {empty && <p className="muted">Nothing scheduled on {formatDate(date)}.</p>}
+
+      <div className="actions" style={{ marginTop: "0.75rem" }}>
+        <MarkHolidayControls date={date} compact />
+      </div>
     </div>
   );
 }

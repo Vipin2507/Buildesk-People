@@ -2,6 +2,7 @@ import { canReview, hasPermission } from "../lib/access";
 import { formatMoney, fullName, labelFor, rangeLabel } from "../lib/format";
 import { recordOn } from "./attendance";
 import { addDays, todayIso, weekday } from "./dates";
+import { holidayMatchesDate } from "./holidays";
 import { holidaysFor, isNonWorking, leaveSummaries } from "./leave";
 import { currentPeriod, runTotals } from "./payroll";
 import { policyApplies, publishedVersion } from "./policies";
@@ -478,11 +479,16 @@ export function dayBrief(state: AppState, user: Employee, date: string): DayLine
   const lines: DayLine[] = [];
   const companyWide = hasPermission(state, user, "leave.manage") || user.role === "admin";
   state.holidays.forEach((holiday) => {
-    if (holiday.date !== date) return;
+    if (!holidayMatchesDate(holiday, date)) return;
     const applies = holiday.locationId === "all" || holiday.locationId === user.locationId;
     if (!applies && !companyWide) return;
     const location = holiday.locationId === "all" ? "All offices" : state.locations.find((item) => item.id === holiday.locationId)?.name ?? "One office";
-    lines.push({ id: holiday.id, title: holiday.name, detail: `Holiday · ${location}`, href: "/leave?tab=holidays" });
+    lines.push({
+      id: holiday.recurrence === "annual" ? `${holiday.id}_${date}` : holiday.id,
+      title: holiday.name,
+      detail: `Holiday${holiday.recurrence === "annual" ? " · Every year" : ""} · ${location}`,
+      href: "/leave?tab=holidays",
+    });
   });
   state.events.forEach((event) => {
     const eventEnd = event.endDate && event.endDate >= event.date ? event.endDate : event.date;

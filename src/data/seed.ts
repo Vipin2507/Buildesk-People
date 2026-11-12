@@ -1,4 +1,5 @@
 import { defaultAutomationConfig } from "./automationDefaults";
+import { COMPANY_HOLIDAYS_2026 } from "../domain/holidays";
 import { defaultMasters } from "../domain/masters";
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { AVATAR_COLORS } from "../lib/palette";
@@ -123,7 +124,7 @@ export function createSeed(): AppState {
     regularizations: [],
     leaveRequests: [],
     compOff: [],
-    holidays: [],
+    holidays: [...COMPANY_HOLIDAYS_2026],
     events: [],
     expenses: [],
     insurance: [],

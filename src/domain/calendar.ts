@@ -1,6 +1,7 @@
 import { canReview, canSeeBirthday, hasPermission } from "../lib/access";
 import { fullName } from "../lib/format";
 import { addDays, eachDate, isoDate, parseISODate } from "./dates";
+import { holidayOccurrencesInRange } from "./holidays";
 import type { AppState, Employee } from "../types";
 
 export type CalendarItemKind = "holiday" | "festival" | "event" | "birthday" | "leave" | "leave_pending";
@@ -82,17 +83,18 @@ export function buildCalendarItems(state: AppState, viewer: Employee, rangeStart
   const items: CalendarItem[] = [];
 
   state.holidays.forEach((holiday) => {
-    if (holiday.date < rangeStart || holiday.date > rangeEnd) return;
     const applies = holiday.locationId === "all" || holiday.locationId === viewer.locationId;
     if (!applies && !companyWide) return;
-    items.push({
-      id: holiday.id,
-      date: holiday.date,
-      title: holiday.name,
-      detail: `Holiday · ${locationLabel(state, holiday.locationId)}`,
-      kind: "holiday",
-      href: "/leave?tab=holidays",
-      locationId: holiday.locationId,
+    holidayOccurrencesInRange(holiday, rangeStart, rangeEnd).forEach((date) => {
+      items.push({
+        id: holiday.recurrence === "annual" ? `${holiday.id}_${date}` : holiday.id,
+        date,
+        title: holiday.name,
+        detail: `Holiday${holiday.recurrence === "annual" ? " · Every year" : ""} · ${locationLabel(state, holiday.locationId)}`,
+        kind: "holiday",
+        href: "/leave?tab=holidays",
+        locationId: holiday.locationId,
+      });
     });
   });
 

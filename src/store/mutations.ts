@@ -3,6 +3,7 @@ import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { derivePunchStatus, recordOn } from "../domain/attendance";
 import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from "../domain/location";
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
+import { normalizeHoliday } from "../domain/holidays";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { createsCycle } from "../domain/org";
 import { ensureAutomation, normalizeAutomationConfig } from "../domain/automation";
@@ -501,7 +502,21 @@ export function saveHoliday(state: AppState, input: Holiday): Outcome {
   const actor = requireUser(state, "leave.manage");
   if (!isEmployee(actor)) return actor;
   if (input.name.trim().length < 3 || !input.date) return fail(state, "Add a holiday name and date.");
-  const holiday = { ...input, id: input.id || uid("hol"), name: input.name.trim() };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return fail(state, "Pick a valid holiday date.");
+  const holiday = normalizeHoliday({
+    ...input,
+    id: input.id || uid("hol"),
+    name: input.name.trim(),
+    recurrence: input.recurrence === "annual" ? "annual" : "once",
+  });
+  const duplicate = state.holidays.find((item) =>
+    item.id !== holiday.id
+    && item.name.toLowerCase() === holiday.name.toLowerCase()
+    && item.date === holiday.date
+    && item.locationId === holiday.locationId
+    && (item.recurrence ?? "once") === holiday.recurrence,
+  );
+  if (duplicate) return fail(state, "That holiday already exists for this date and location.");
   const holidays = state.holidays.some((item) => item.id === holiday.id)
     ? state.holidays.map((item) => (item.id === holiday.id ? holiday : item))
     : [...state.holidays, holiday];

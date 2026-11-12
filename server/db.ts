@@ -8,6 +8,7 @@ import { createSeed } from "../src/data/seed.ts";
 import { normalizeAttendance } from "../src/domain/attendance.ts";
 import { ensureAutomation } from "../src/domain/automation.ts";
 import { applyLocationRetention, withAttendancePolicy } from "../src/domain/location.ts";
+import { ensureCompanyHolidays } from "../src/domain/holidays.ts";
 import { ensureMasters } from "../src/domain/masters.ts";
 import { DATA_VERSION, type AppState } from "../src/types.ts";
 
@@ -48,8 +49,9 @@ export function readWorkspace(): AppState {
   const cleaned = removeDemoContent(parsed.state);
   const granted = grantHrAdminAccess(cleaned.state);
   const mastered = ensureMasters(ensureAutomation(granted.state));
-  const retained = applyLocationRetention(mastered.state);
-  if (cleaned.changed || granted.changed || mastered.changed || retained.changed || parsed.changed || !parsed.state.automation) {
+  const withHolidays = ensureCompanyHolidays(mastered.state);
+  const retained = applyLocationRetention(withHolidays.state);
+  if (cleaned.changed || granted.changed || mastered.changed || withHolidays.changed || retained.changed || parsed.changed || !parsed.state.automation) {
     writeWorkspace(retained.state);
   }
   return retained.state;

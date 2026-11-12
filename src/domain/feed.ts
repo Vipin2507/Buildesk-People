@@ -1,6 +1,7 @@
 import { hasPermission } from "../lib/access";
 import { fullName } from "../lib/format";
 import { addDays, todayIso } from "./dates";
+import { holidayOccurrencesInRange } from "./holidays";
 import type { AppState, Employee } from "../types";
 
 export interface FeedItem {
@@ -26,17 +27,18 @@ export function upcomingFeed(state: AppState, viewer: Employee, withinDays = 28)
   const items: FeedItem[] = [];
 
   state.holidays.forEach((holiday) => {
-    if (holiday.date < today || holiday.date > end) return;
     const applies = holiday.locationId === "all" || holiday.locationId === viewer.locationId;
     if (!applies && !companyWide) return;
     const location = holiday.locationId === "all" ? "All offices" : state.locations.find((item) => item.id === holiday.locationId)?.name ?? "One office";
-    items.push({
-      id: holiday.id,
-      date: holiday.date,
-      title: holiday.name,
-      detail: location,
-      kind: "holiday",
-      href: "/leave?tab=holidays",
+    holidayOccurrencesInRange(holiday, today, end).forEach((date) => {
+      items.push({
+        id: holiday.recurrence === "annual" ? `${holiday.id}_${date}` : holiday.id,
+        date,
+        title: holiday.name,
+        detail: location,
+        kind: "holiday",
+        href: "/leave?tab=holidays",
+      });
     });
   });
 

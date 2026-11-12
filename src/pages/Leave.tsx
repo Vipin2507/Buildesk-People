@@ -23,10 +23,13 @@ import {
 } from "../domain/calendar";
 import { addDays, todayIso } from "../domain/dates";
 import { defaultCompOffExpiry, leaveSummaries } from "../domain/leave";
-import { formatDate, formatDateLong, fullName, monthLabel, rangeLabel } from "../lib/format";
+import { MarkHolidayControls } from "../components/mark-holiday";
+import { formatDate, formatDateLong, formatHolidayDate, fullName, monthLabel, rangeLabel } from "../lib/format";
 import { useTab } from "../lib/useTab";
 import { useApp } from "../store/store";
 import type { CompanyEvent, Holiday, LeaveRequest, PartialDay } from "../types";
+
+const EMPTY_HOLIDAY: Holiday = { id: "", name: "", date: "", locationId: "all", recurrence: "once" };
 
 const CAL_STATE_KEY = "buildesk-people-leave-calendar";
 
@@ -482,7 +485,7 @@ function LeaveCalendar() {
 
       <section className="panel leave-cal-day-panel" aria-live="polite">
         <h2>{formatDateLong(selected)}</h2>
-        <p className="muted">Selected day details for your visibility.</p>
+        <p className="muted">Selected day details for your visibility. Past days can be marked as holidays when you manage leave.</p>
         {dayItems.length === 0 ? (
           <EmptyState title="Nothing scheduled" body="No holidays, events, birthdays, or leave on this date for your view." />
         ) : (
@@ -498,6 +501,9 @@ function LeaveCalendar() {
             ))}
           </ul>
         )}
+        <div className="actions" style={{ marginTop: "0.75rem" }}>
+          <MarkHolidayControls date={selected} />
+        </div>
       </section>
 
       {detail && (
@@ -531,7 +537,7 @@ const EMPTY_EVENT: CompanyEvent = { id: "", title: "", date: "", endDate: "", lo
 
 function Holidays() {
   const { state, user, can, actions } = useApp();
-  const [holiday, setHoliday] = useState<Holiday>({ id: "", name: "", date: "", locationId: "all" });
+  const [holiday, setHoliday] = useState<Holiday>(EMPTY_HOLIDAY);
   const [eventForm, setEventForm] = useState<CompanyEvent>(EMPTY_EVENT);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState("");
@@ -541,7 +547,7 @@ function Holidays() {
   const manage = can("leave.manage");
   const visibleHolidays = state.holidays
     .filter((item) => manage || item.locationId === "all" || item.locationId === user.locationId)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.slice(5).localeCompare(b.date.slice(5)) || a.date.localeCompare(b.date));
   const visibleEvents = state.events
     .filter((item) => manage || item.locationId === "all" || item.locationId === user.locationId)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -551,17 +557,19 @@ function Holidays() {
     <div className="grid-2">
       <section className="panel">
         <h2>Holidays for your location</h2>
-        <p className="muted">Company holidays block leave counting for the selected offices. Configure dates here — national lists are not imported automatically.</p>
+        <p className="muted">
+          Fixed national days can repeat every year. Festivals that follow the lunar calendar are stored as one-time dates for that year (for example Holi or Diwali in 2026).
+        </p>
         {visibleHolidays.length === 0 && <EmptyState title="No holidays yet" body={manage ? "Add company holidays for the offices that observe them." : "No holidays apply to your location yet."} />}
         {visibleHolidays.map((item) => (
           <div key={item.id} className="notice split">
             <div>
               <strong>{item.name}</strong>
-              <div className="muted">{formatDate(item.date)} · {locationName(item.locationId)}</div>
+              <div className="muted">{formatHolidayDate(item.date, item.recurrence)} · {locationName(item.locationId)}</div>
             </div>
             {manage && (
               <div className="actions">
-                <Button size="sm" variant="secondary" onClick={() => { setHoliday(item); setError(""); }}>Edit</Button>
+                <Button size="sm" variant="secondary" onClick={() => { setHoliday({ ...item, recurrence: item.recurrence ?? "once" }); setError(""); }}>Edit</Button>
                 <Button size="sm" variant="ghost" onClick={() => setRemoveHolidayId(item.id)}>Remove</Button>
               </div>
             )}
@@ -592,22 +600,37 @@ function Holidays() {
       {manage ? (
         <section className="panel">
           <h2>{holiday.id ? "Edit holiday" : "Add a holiday"}</h2>
+          <Banner tone="info">
+            The year picker is only needed for one-time festival dates. Choose “Every year” for fixed days like Republic Day so they apply every year without re-entry.
+          </Banner>
           {error && <Banner tone="error">{error}</Banner>}
           <Field label="Name"><input value={holiday.name} onChange={(event) => setHoliday({ ...holiday, name: event.target.value })} /></Field>
           <Field label="Date"><DatePicker value={holiday.date} onChange={(date) => setHoliday({ ...holiday, date })} /></Field>
+          <Field label="Repeats">
+            <select
+              value={holiday.recurrence ?? "once"}
+              onChange={(event) => setHoliday({ ...holiday, recurrence: event.target.value as Holiday["recurrence"] })}
+            >
+              <option value="once">One-time date (this year only)</option>
+              <option value="annual">Every year on this month and day</option>
+            </select>
+          </Field>
+          {holiday.date && (
+            <p className="faint">{formatHolidayDate(holiday.date, holiday.recurrence)}</p>
+          )}
           <Field label="Applies to">
             <select value={holiday.locationId} onChange={(event) => setHoliday({ ...holiday, locationId: event.target.value })}>
               <option value="all">All offices</option>
-              {state.locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {state.locations.filter((item) => item.active !== false).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </Field>
           <div className="actions">
             <Button onClick={async () => {
               const result = await actions.saveHoliday(holiday);
               if (!result.ok) setError(result.message);
-              else { setHoliday({ id: "", name: "", date: "", locationId: "all" }); setError(""); }
+              else { setHoliday(EMPTY_HOLIDAY); setError(""); }
             }}>{holiday.id ? "Update holiday" : "Save holiday"}</Button>
-            {holiday.id && <Button variant="secondary" onClick={() => setHoliday({ id: "", name: "", date: "", locationId: "all" })}>Cancel edit</Button>}
+            {holiday.id && <Button variant="secondary" onClick={() => setHoliday(EMPTY_HOLIDAY)}>Cancel edit</Button>}
           </div>
 
           <h2>{eventForm.id ? "Edit event" : "Add an event or festival"}</h2>

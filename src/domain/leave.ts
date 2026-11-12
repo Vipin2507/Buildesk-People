@@ -1,4 +1,5 @@
 import { addDays, eachDate, todayIso, weekday } from "./dates";
+import { holidayMatchesDate } from "./holidays";
 import type {
   AppState,
   AttendanceRecord,
@@ -28,7 +29,9 @@ export function isWeeklyOff(iso: string, weeklyOff: number[]): boolean {
 }
 
 export function isHoliday(iso: string, locationId: string, holidays: Holiday[]): boolean {
-  return holidays.some((item) => item.date === iso && (item.locationId === "all" || item.locationId === locationId));
+  return holidays.some(
+    (item) => holidayMatchesDate(item, iso) && (item.locationId === "all" || item.locationId === locationId),
+  );
 }
 
 export function isNonWorking(iso: string, locationId: string, settings: OrgSettings, holidays: Holiday[]): boolean {
@@ -36,7 +39,9 @@ export function isNonWorking(iso: string, locationId: string, settings: OrgSetti
 }
 
 export function holidaysFor(iso: string, locationId: string, holidays: Holiday[]): Holiday[] {
-  return holidays.filter((item) => item.date === iso && (item.locationId === "all" || item.locationId === locationId));
+  return holidays.filter(
+    (item) => holidayMatchesDate(item, iso) && (item.locationId === "all" || item.locationId === locationId),
+  );
 }
 
 export function workingDaysFor(employee: Employee, start: string, end: string, state: AppState): string[] {

@@ -267,7 +267,7 @@ function LeaveHolidaysSettings({ onDirty }: { onDirty: (dirty: boolean) => void 
       </section>
       <section className="panel">
         <h2>Holidays & calendars</h2>
-        <p className="muted">Holiday dates and company events are company data. National calendars are not auto-imported.</p>
+        <p className="muted">Holiday dates and company events are company data. Fixed days can repeat yearly; lunar festival dates are one-time for the year you set.</p>
         <p>{state.holidays.length} holidays · {state.events.length} events configured.</p>
         <div className="actions">
           <Link className="btn btn-primary btn-sm" to="/leave?tab=holidays">Open holiday calendar</Link>
