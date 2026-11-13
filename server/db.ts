@@ -7,6 +7,7 @@ import { removeDemoContent } from "../src/data/cleanup.ts";
 import { createSeed } from "../src/data/seed.ts";
 import { normalizeAttendance } from "../src/domain/attendance.ts";
 import { ensureAutomation } from "../src/domain/automation.ts";
+import { ensureMicrosoft365 } from "../src/domain/hr-meeting.ts";
 import { applyLocationRetention, withAttendancePolicy } from "../src/domain/location.ts";
 import { ensureCompanyHolidays } from "../src/domain/holidays.ts";
 import { ensureMasters } from "../src/domain/masters.ts";
@@ -49,9 +50,10 @@ export function readWorkspace(): AppState {
   const cleaned = removeDemoContent(parsed.state);
   const granted = grantHrAdminAccess(cleaned.state);
   const mastered = ensureMasters(ensureAutomation(granted.state));
-  const withHolidays = ensureCompanyHolidays(mastered.state);
+  const withMs = ensureMicrosoft365(mastered.state);
+  const withHolidays = ensureCompanyHolidays(withMs);
   const retained = applyLocationRetention(withHolidays.state);
-  if (cleaned.changed || granted.changed || mastered.changed || withHolidays.changed || retained.changed || parsed.changed || !parsed.state.automation) {
+  if (cleaned.changed || granted.changed || mastered.changed || withHolidays.changed || retained.changed || parsed.changed || !parsed.state.automation || !parsed.state.microsoft365 || !withMs.microsoft365) {
     writeWorkspace(retained.state);
   }
   return retained.state;

@@ -1,9 +1,31 @@
-import { hasPermission, canManageTicket, canSeeCompensation, canSeeDocument, canSeeSensitiveContact } from "../src/lib/access.ts";
+import { hasPermission, canManageHrMeeting, canManageTicket, canSeeCompensation, canSeeDocument, canSeeSensitiveContact } from "../src/lib/access.ts";
 import { defaultAutomationConfig } from "../src/data/automationDefaults.ts";
 import { normalizeAutomationConfig } from "../src/domain/automation.ts";
+import { normalizeMicrosoft365 } from "../src/domain/hr-meeting.ts";
 import { policyApplies } from "../src/domain/policies.ts";
 import { sessionEmployee } from "../src/lib/session.ts";
-import type { AppState, Employee, PayrollRun } from "../src/types.ts";
+import type { AppState, Employee, PayrollRun, Ticket } from "../src/types.ts";
+
+function redactHrMeetingTicket(ticket: Ticket, viewer: Employee, canHr: boolean): Ticket {
+  if (ticket.kind !== "hr_meeting" || !ticket.meeting) return ticket;
+  if (ticket.employeeId === viewer.id || canHr) return ticket;
+  return {
+    ...ticket,
+    description: "Sensitive HR meeting details are restricted.",
+    attachmentName: "",
+    meeting: {
+      ...ticket.meeting,
+      contactNote: "",
+      hrResponse: ticket.meeting.hrResponse ? "Response on file (restricted)." : "",
+    },
+    history: ticket.history.map((item) => ({
+      ...item,
+      comment: /approved|rescheduled|rejected|cancelled|opened|sync/i.test(item.action)
+        ? item.comment
+        : "Update on file (restricted).",
+    })),
+  };
+}
 
 function redactPayrollRun(run: PayrollRun): PayrollRun {
   const review = run.lines.filter((line) => line.exceptions.some((item) => !/monthly gross/i.test(item))).length;
@@ -76,7 +98,10 @@ export function presentWorkspace(source: AppState, accountId: string): AppState 
     compOff: state.compOff.filter((item) => seeLeave(item.employeeId)),
     expenses: state.expenses.filter((item) => seeExpense(item.employeeId)),
     insurance: state.insurance.filter((item) => item.employeeId === self || hasPermission(state, viewer, "insurance.manage")),
-    tickets: state.tickets.filter((item) => item.employeeId === self || canManageTicket(state, viewer, item)),
+    tickets: state.tickets
+      .filter((item) => item.employeeId === self || canManageTicket(state, viewer, item))
+      .map((item) => redactHrMeetingTicket(item, viewer, canManageHrMeeting(state, viewer))),
+    microsoft365: normalizeMicrosoft365(state.microsoft365),
     assets: state.assets.filter((item) => hasPermission(state, viewer, "assets.manage") || item.assignedTo === self),
     documents: state.documents.filter((item) => canSeeDocument(state, viewer, item)),
     policies: hasPermission(state, viewer, "policies.manage")

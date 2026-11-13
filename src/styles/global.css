@@ -1585,3 +1585,16 @@ html.theme-switching .signin-card {
 .picker-list button { width: 100%; text-align: left; background: transparent; border: 0; padding: 8px 10px; color: var(--text); }
 .picker-list button:hover, .picker-list button[aria-selected="true"] { background: var(--hover); }
 .policy-body { white-space: pre-wrap; }
+.hr-meetings-module .filters-bar { margin-bottom: 12px; }
+.hr-meetings-module .agenda-list { list-style: none; margin: 0; padding: 0 0 12px; display: grid; gap: 10px; }
+.hr-meetings-module .agenda-list li {
+  display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border);
+}
+.hr-meetings-module .agenda-list li:first-child { border-top: 0; }
+.hr-meetings-module button.linkish {
+  background: none; border: 0; padding: 0; color: var(--color-primary); font: inherit; cursor: pointer; text-align: left;
+}
+.hr-meetings-module button.linkish:hover { text-decoration: underline; }
+.hr-meetings-module .timeline.compact { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.hr-meetings-module .timeline.compact li { padding: 8px 0; border-top: 1px solid var(--border); }
+.hr-meetings-module .timeline.compact li:first-child { border-top: 0; }

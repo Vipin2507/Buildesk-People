@@ -45,6 +45,14 @@ export function signedOutState(accounts: UserAccount[]): AppState {
       locationRetentionDays: null,
     },
     automation: defaultAutomationConfig(),
+    microsoft365: {
+      enabled: false,
+      tenantId: "",
+      clientId: "",
+      defaultOrganizerEmail: "",
+      allowedOrganizerEmails: [],
+      demoMode: true,
+    },
   };
 }
 

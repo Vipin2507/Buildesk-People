@@ -13,7 +13,12 @@ import type { AppState } from "../src/types.ts";
 import { actions } from "./actions.ts";
 import { checkN8nHealth, checkWahaSession, postN8nWebhook, sendWahaText } from "./automation.ts";
 import { afterActionAutomation } from "./automation-hooks.ts";
+import { afterActionHrMeetingSync } from "./hr-meeting-hooks.ts";
+import { processHrMeetingSync } from "./hr-meeting-sync.ts";
+import { testMicrosoftConnection } from "./microsoft-graph.ts";
 import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
+import { normalizeMicrosoft365 } from "../src/domain/hr-meeting.ts";
+import { recordMicrosoft365Health } from "../src/store/mutations.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
 import { renderPayslipPdf } from "./payslip-pdf.ts";
@@ -681,9 +686,17 @@ const server = createServer(async (request, response) => {
         send(response, 200, { result: outcome.result, toast: outcome.toast, tone: outcome.tone ?? "error" });
         return;
       }
-      const saved = { ...outcome.state, currentUserId: null };
+      let saved = { ...outcome.state, currentUserId: null };
       writeWorkspace(saved);
       afterActionAutomation(name, before, outcome.state, { ...input, resultId: outcome.result.id });
+      const syncIds = ["approveHrMeeting", "rescheduleHrMeeting", "cancelHrMeeting", "retryHrMeetingSync"];
+      if (syncIds.includes(name) && typeof input.id === "string") {
+        const synced = await processHrMeetingSync(readWorkspace(), input.id);
+        saved = { ...synced, currentUserId: null };
+        writeWorkspace(saved);
+      } else {
+        afterActionHrMeetingSync(name, outcome.state, { ...input, resultId: outcome.result.id });
+      }
       const still = sessionStillValid(saved, accountId);
       if (!still) deleteSession(token);
       send(
@@ -692,6 +705,31 @@ const server = createServer(async (request, response) => {
         { result: outcome.result, toast: outcome.toast, tone: outcome.tone ?? "success", state: still ? presentWorkspace(saved, accountId) : null },
         still ? {} : { "set-cookie": cookieHeader(null, request) },
       );
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/microsoft365/test") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "settings.org")) {
+        send(response, 403, { ok: false, message: "Microsoft 365 settings are limited to organization administrators." });
+        return;
+      }
+      const config = normalizeMicrosoft365(state.microsoft365);
+      const result = await testMicrosoftConnection(config);
+      const outcome = recordMicrosoft365Health(state, { ok: result.ok, message: result.message });
+      if (outcome.result.ok) writeWorkspace({ ...outcome.state, currentUserId: null });
+      send(response, 200, {
+        ok: result.ok,
+        message: result.message,
+        state: presentWorkspace(outcome.state, accountId),
+      });
       return;
     }
 
@@ -731,6 +769,54 @@ const server = createServer(async (request, response) => {
       }
       const result = await checkN8nHealth(config);
       send(response, 200, { ok: result.ok, message: result.message, state: presentWorkspace(state, accountId) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/automation/attendance-reminder") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "automation.manage")) {
+        send(response, 403, { ok: false, message: "Automation is limited to authorized administrators." });
+        return;
+      }
+      const body = await readBody(request);
+      const kind = body.kind === "logout" ? "logout" : "login";
+      const force = body.force !== false;
+      const { runAttendanceReminder, reminderSchedulePreview } = await import("./attendance-reminders.ts");
+      const outcome = await runAttendanceReminder(kind, { force });
+      const latest = readWorkspace();
+      send(response, 200, {
+        ok: outcome.ok,
+        message: outcome.message,
+        toast: outcome.message,
+        tone: outcome.ok ? "success" : "error",
+        preview: reminderSchedulePreview(latest),
+        state: presentWorkspace({ ...latest, currentUserId: null }, accountId),
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/automation/attendance-reminder/preview") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "automation.manage")) {
+        send(response, 403, { ok: false, message: "Automation is limited to authorized administrators." });
+        return;
+      }
+      const { reminderSchedulePreview } = await import("./attendance-reminders.ts");
+      send(response, 200, { ok: true, preview: reminderSchedulePreview(state) });
       return;
     }
 

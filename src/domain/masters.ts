@@ -19,6 +19,7 @@ export const MASTER_CATEGORIES: Array<{
   { id: "notification_categories", group: "Notifications", label: "Notification categories", description: "In-app notification kind labels." },
   { id: "payroll_earnings", group: "Payroll", label: "Earning component names", description: "Display names for earning lines. Calculation rules stay in payroll." },
   { id: "payroll_deductions", group: "Payroll", label: "Deduction component names", description: "Display names for deduction lines. Rates and formulas are not stored here." },
+  { id: "hr_meeting_topics", group: "Tickets", label: "HR meeting topics", description: "Topics shown when employees request an HR call or Teams meeting." },
 ];
 
 function item(id: string, name: string, code?: string, description = ""): MasterValue {
@@ -99,6 +100,14 @@ export function defaultMasters(): MastersCatalog {
       item("pd_loan", "Loan / advance", "loan"),
       item("pd_penalty", "Penalties", "penalty"),
       item("pd_other", "Other deductions", "other"),
+    ],
+    hr_meeting_topics: [
+      item("hmt_leave", "Leave"),
+      item("hmt_payroll", "Payroll"),
+      item("hmt_benefits", "Benefits"),
+      item("hmt_policy", "Policy"),
+      item("hmt_workplace", "Workplace concern"),
+      item("hmt_other", "Other"),
     ],
   };
 }

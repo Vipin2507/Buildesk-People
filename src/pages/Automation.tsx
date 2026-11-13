@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Activity, Mail, MessageCircle, Power, Radio, ShieldAlert, Workflow } from "lucide-react";
 import { Banner, Button, DataTable, EmptyState, Field, Modal, NoAccess, PageHeader, Panel, Stat, StatusBadge, Tabs } from "../components/ui";
@@ -13,6 +13,8 @@ import {
   wahaReady,
   wrapSelection,
 } from "../domain/automation";
+import { subtractMinutesHhmm } from "../domain/dates";
+import { request } from "../lib/api";
 import { formatDateTime, fullName } from "../lib/format";
 import { useTab } from "../lib/useTab";
 import { useApp } from "../store/store";
@@ -57,10 +59,29 @@ function useConfig() {
 }
 
 function Overview({ onOpenChannels, onOpenRules }: { onOpenChannels: () => void; onOpenRules: () => void }) {
+  const { state, actions } = useApp();
   const config = useConfig();
+  const [busy, setBusy] = useState<"login" | "logout" | "">("");
+  const [reminderMessage, setReminderMessage] = useState("");
+  const [officeClock, setOfficeClock] = useState("");
   const activeRules = config.rules.filter((item) => item.isActive).length;
   const failed = config.logs.filter((item) => item.status === "failed").length;
   const success = config.logs.filter((item) => item.status === "success").length;
+  const loginRule = config.rules.find((item) => item.trigger === "attendance-login-reminder" && item.isActive);
+  const logoutRule = config.rules.find((item) => item.trigger === "attendance-logout-reminder" && item.isActive);
+  const offset = loginRule?.offsetMinutes ?? logoutRule?.offsetMinutes ?? 15;
+  const workStart = state.settings.workStart;
+  const workEnd = state.settings.workEnd?.trim() || "";
+  const loginAt = workStart ? subtractMinutesHhmm(workStart, offset) : null;
+  const logoutAt = workEnd ? subtractMinutesHhmm(workEnd, offset) : null;
+  const withPhone = state.employees.filter((person) => (person.status === "active" || person.status === "on_notice") && person.phone?.trim()).length;
+  const blockers = [
+    !config.settings.automationsEnabled ? "Global automation switch is Off" : null,
+    !wahaReady(config.waha) ? "WAHA is not ready (API URL, session, API key)" : null,
+    !loginRule && !logoutRule ? "Attendance reminder rules are inactive or missing" : null,
+    withPhone === 0 ? "No active employees have a phone number for WhatsApp" : null,
+    !workEnd ? "Workday end is not set (logout reminder)" : null,
+  ].filter(Boolean) as string[];
   const next =
     !config.settings.automationsEnabled
       ? "Turn on the global switch after WAHA or n8n is healthy."
@@ -69,6 +90,25 @@ function Overview({ onOpenChannels, onOpenRules }: { onOpenChannels: () => void;
         : activeRules === 0
           ? "Activate rules that match your HR events."
           : "Automations are armed. Review logs after the next event.";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { payload } = await request("/api/automation/attendance-reminder/preview");
+      if (cancelled) return;
+      const preview = (payload as { preview?: { officeTime?: string; officeDate?: string } }).preview;
+      if (preview?.officeTime) setOfficeClock(`${preview.officeDate ?? ""} ${preview.officeTime}`.trim());
+    })();
+    return () => { cancelled = true; };
+  }, [state.settings.workStart, state.settings.workEnd, config.settings.automationsEnabled]);
+
+  const runReminder = async (kind: "login" | "logout") => {
+    setBusy(kind);
+    setReminderMessage("");
+    const result = await actions.runAttendanceReminder(kind, true);
+    setBusy("");
+    setReminderMessage(result.message);
+  };
 
   return (
     <div className="stack-lg">
@@ -110,7 +150,7 @@ function Overview({ onOpenChannels, onOpenRules }: { onOpenChannels: () => void;
       <Panel title="Next step" action={<Button variant="secondary" onClick={onOpenChannels}>Open channels</Button>}>
         <p>{next}</p>
         <Banner tone="info">
-          Email automation posts JSON to n8n. SMTP lives in n8n, not in Buildesk People. WhatsApp sends go through WAHA with a short pause between messages. Attendance login/logout reminders fire for the whole active team 15 minutes before work start and end (Asia/Kolkata), once you enable the global switch and WAHA.
+          Email automation posts JSON to n8n. SMTP lives in n8n, not in Buildesk People. WhatsApp sends go through WAHA with a short pause between messages. Attendance reminders fire {offset} minutes before work start/end on the Asia/Kolkata office clock — and only while the API server is running.
         </Banner>
         <div className="actions">
           <Button onClick={onOpenRules}>Manage rules</Button>
@@ -118,9 +158,37 @@ function Overview({ onOpenChannels, onOpenRules }: { onOpenChannels: () => void;
         </div>
       </Panel>
 
+      <Panel title="Attendance reminders">
+        <p className="muted">
+          Work start {workStart || "—"} → login reminder at {loginAt || "—"}
+          {" · "}
+          Work end {workEnd || "not set"} → logout reminder at {logoutAt || "—"}
+          {officeClock ? ` · Office clock ${officeClock}` : ""}
+        </p>
+        <p className="muted">{withPhone} active employee(s) have a phone number for WhatsApp.</p>
+        {blockers.length > 0 ? (
+          <Banner tone="warning">
+            Reminder will not send until these are fixed:
+            <ul>{blockers.map((item) => <li key={item}>{item}</li>)}</ul>
+          </Banner>
+        ) : (
+          <Banner tone="success">Reminder path looks ready. Scheduled sends need the API process running through the reminder minute.</Banner>
+        )}
+        {reminderMessage && <Banner tone="info">{reminderMessage}</Banner>}
+        <div className="actions">
+          <Button disabled={busy === "login"} onClick={() => void runReminder("login")}>
+            {busy === "login" ? "Sending…" : "Run login reminder now"}
+          </Button>
+          <Button variant="secondary" disabled={busy === "logout"} onClick={() => void runReminder("logout")}>
+            {busy === "logout" ? "Sending…" : "Run logout reminder now"}
+          </Button>
+          <Link className="btn btn-secondary" to="/settings?tab=work">Work schedule</Link>
+        </div>
+      </Panel>
+
       <Panel title="Recent delivery" action={<Link to="/automation?tab=logs">View logs</Link>}>
         {config.logs.length === 0 ? (
-          <EmptyState title="No automation attempts yet" body="Successful and failed handoffs appear here after events or a manual test." />
+          <EmptyState title="No automation attempts yet" body="Successful and failed handoffs appear here after events, a manual test, or Run reminder now." />
         ) : (
           <ul className="automation-feed">
             {config.logs.slice(0, 6).map((log) => (

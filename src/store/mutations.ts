@@ -1,9 +1,16 @@
-import { canManageTicket, canReview, defaultAssignee, hasPermission } from "../lib/access";
+import { canManageHrMeeting, canManageTicket, canReview, defaultAssignee, hasPermission } from "../lib/access";
 import { DEFAULT_ROLE_PERMISSIONS } from "../lib/access";
 import { derivePunchStatus, recordOn } from "../domain/attendance";
 import { acceptPunchLocation, applyLocationRetention, locationAuditPhrase } from "../domain/location";
 import { addDays, nowIso, todayIso, uid, wallNow } from "../domain/dates";
 import { normalizeHoliday } from "../domain/holidays";
+import {
+  formatMeetingSlot,
+  hrMeetingTopics,
+  isHrMeetingTicket,
+  normalizeMicrosoft365,
+  validateMeetingSlot,
+} from "../domain/hr-meeting";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { snapshotPayslipRecord, validatePayslipData, buildPayslipDto, PAYSLIP_TEMPLATE_VERSION } from "../domain/payslip";
 import { createsCycle } from "../domain/org";
@@ -36,7 +43,10 @@ import type {
   ExpenseClaim,
   HistoryEvent,
   Holiday,
+  HrMeetingDetails,
+  HrMeetingSlot,
   LeaveType,
+  Microsoft365Config,
   NotificationKind,
   PartialDay,
   PayrollLine,
@@ -47,6 +57,7 @@ import type {
   RequestStatus,
   Result,
   Role,
+  Ticket,
   UserAccount,
   TicketPriority,
   TicketStatus,
@@ -672,37 +683,421 @@ export function saveInsurance(state: AppState, input: InsuranceDraft): Outcome {
   return ok(next, "Insurance record saved.");
 }
 
-export function createTicket(
-  state: AppState,
-  input: { subject: string; description: string; category: string; priority: TicketPriority; attachmentName: string },
-): Outcome {
+export type CreateTicketInput = {
+  subject: string;
+  description: string;
+  category: string;
+  priority: TicketPriority;
+  attachmentName: string;
+  kind?: "support" | "hr_meeting";
+  meeting?: {
+    requestType: "teams" | "phone";
+    topic: string;
+    preferred: HrMeetingSlot;
+    alternative?: HrMeetingSlot | null;
+    contactNote?: string;
+  };
+};
+
+export function createTicket(state: AppState, input: CreateTicketInput): Outcome {
   const actor = requireUser(state, "tickets.self");
   if (!isEmployee(actor)) return actor;
   const unlinked = requireOwnRecord(state, actor);
   if (unlinked) return unlinked;
-  if (!state.settings.ticketCategories.includes(input.category)) return fail(state, "Choose a category.");
+  const kind = input.kind === "hr_meeting" ? "hr_meeting" : "support";
+  if (kind === "support" && !state.settings.ticketCategories.includes(input.category)) return fail(state, "Choose a category.");
   if (input.subject.trim().length < 5) return fail(state, "Add a subject of at least 5 characters.");
   if (input.description.trim().length < 10) return fail(state, "Describe the request in at least a sentence.");
+
+  let meeting: HrMeetingDetails | null = null;
+  if (kind === "hr_meeting") {
+    if (!input.meeting) return fail(state, "Add meeting preference details.");
+    const topics = hrMeetingTopics(state);
+    if (!topics.includes(input.meeting.topic)) return fail(state, "Choose a meeting topic.");
+    const preferredError = validateMeetingSlot(input.meeting.preferred, "preferred");
+    if (preferredError) return fail(state, preferredError);
+    if (input.meeting.alternative) {
+      const altError = validateMeetingSlot(input.meeting.alternative, "alternative");
+      if (altError) return fail(state, altError);
+    }
+    const ms = normalizeMicrosoft365(state.microsoft365);
+    meeting = {
+      requestType: input.meeting.requestType === "phone" ? "phone" : "teams",
+      topic: input.meeting.topic,
+      preferred: input.meeting.preferred,
+      alternative: input.meeting.alternative ?? null,
+      confirmed: null,
+      originalPreferred: input.meeting.preferred,
+      contactNote: (input.meeting.contactNote || "").trim(),
+      meetingStatus: "awaiting_hr",
+      organizerEmail: ms.defaultOrganizerEmail || null,
+      organizerEmployeeId: null,
+      graphEventId: null,
+      joinUrl: null,
+      webLink: null,
+      calendarSyncStatus: "idle",
+      syncAttemptCount: 0,
+      lastSyncError: null,
+      lastSyncedAt: null,
+      idempotencyKey: uid("meet"),
+      hrResponse: "",
+      pendingSyncAction: null,
+    };
+  }
+
   const count = state.tickets.length + 2401;
   const id = uid("tck");
-  const assigneeId = defaultAssignee(state, input.category);
-  const ticket = {
+  const category = kind === "hr_meeting" ? "HR" : input.category;
+  const assigneeId = defaultAssignee(state, category);
+  const ticket: Ticket = {
     id,
     number: `TCK-${count}`,
     employeeId: actor.id,
     subject: input.subject.trim(),
     description: input.description.trim(),
-    category: input.category,
+    category,
     priority: input.priority,
-    status: "open" as const,
+    status: "open",
     assigneeId,
     attachmentName: input.attachmentName,
     createdAt: nowIso(),
     updatedAt: nowIso(),
-    history: [hist(actor.id, "Opened", input.description.trim())],
+    history: [hist(actor.id, "Opened", kind === "hr_meeting" ? "HR meeting request submitted. The preferred time is not confirmed until HR approves it." : input.description.trim())],
+    kind,
+    meeting,
   };
-  const notes = assigneeId ? [{ userId: assigneeId, title: "New ticket", body: `${fullName(actor)} opened “${ticket.subject}”.`, href: `/tickets/${id}`, kind: "ticket" as const }] : [];
-  return ok(pushNotes(pushAudit({ ...state, tickets: [ticket, ...state.tickets] }, actor.id, "tickets", `Opened ticket ${ticket.number}.`), notes), "Ticket created.", id);
+  const hrManagers = kind === "hr_meeting"
+    ? state.employees.filter((item) => item.status === "active" && canManageHrMeeting(state, item) && item.id !== actor.id)
+    : [];
+  const notes = kind === "hr_meeting"
+    ? hrManagers.map((item) => ({
+        userId: item.id,
+        title: "New HR meeting request",
+        body: `${fullName(actor)} requested an HR ${meeting?.requestType === "phone" ? "call" : "Teams meeting"} (${meeting?.topic}). Preferred time is not confirmed yet.`,
+        href: `/tickets/meetings?focus=${id}`,
+        kind: "ticket" as const,
+      }))
+    : assigneeId
+      ? [{ userId: assigneeId, title: "New ticket", body: `${fullName(actor)} opened “${ticket.subject}”.`, href: `/tickets/${id}`, kind: "ticket" as const }]
+      : [];
+  return ok(pushNotes(pushAudit({ ...state, tickets: [ticket, ...state.tickets] }, actor.id, "tickets", `Opened ticket ${ticket.number}.`), notes), kind === "hr_meeting" ? "HR meeting request submitted." : "Ticket created.", id);
+}
+
+function resolveOrganizerEmail(state: AppState, requested: string | null | undefined): { ok: true; email: string } | { ok: false; message: string } {
+  const ms = normalizeMicrosoft365(state.microsoft365);
+  const email = (requested || ms.defaultOrganizerEmail || "").trim().toLowerCase();
+  if (!email) return { ok: false, message: "Configure an HR organizer mailbox in Settings → Integrations." };
+  if (ms.allowedOrganizerEmails.length && !ms.allowedOrganizerEmails.includes(email)) {
+    return { ok: false, message: "That organizer mailbox is not on the approved HR list." };
+  }
+  return { ok: true, email };
+}
+
+function patchMeetingTicket(ticket: Ticket, meeting: HrMeetingDetails, history: HistoryEvent, ticketStatus?: TicketStatus): Ticket {
+  return {
+    ...ticket,
+    status: ticketStatus ?? ticket.status,
+    meeting,
+    updatedAt: nowIso(),
+    history: [...ticket.history, history],
+  };
+}
+
+export function approveHrMeeting(
+  state: AppState,
+  id: string,
+  input: { organizerEmail?: string; slot?: HrMeetingSlot | null; response?: string } = {},
+): Outcome {
+  const actor = requireUser(state, "meetings.manage");
+  if (!isEmployee(actor)) return actor;
+  if (!canManageHrMeeting(state, actor)) return fail(state, "Only authorized HR can approve meeting requests.", true);
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  const meeting = ticket.meeting;
+  if (meeting.meetingStatus === "rejected" || meeting.meetingStatus === "cancelled") {
+    return fail(state, "This request is closed.");
+  }
+  if (meeting.meetingStatus === "scheduled" && meeting.calendarSyncStatus === "synced") {
+    return fail(state, "This meeting is already scheduled. Use reschedule to change the time.");
+  }
+  const slot = input.slot ?? meeting.preferred;
+  const slotError = validateMeetingSlot(slot, "confirmed");
+  if (slotError) return fail(state, slotError);
+  const organizer = resolveOrganizerEmail(state, input.organizerEmail ?? meeting.organizerEmail);
+  if (!organizer.ok) return fail(state, organizer.message);
+  const response = (input.response || "").trim();
+  const nextMeeting: HrMeetingDetails = {
+    ...meeting,
+    confirmed: slot,
+    organizerEmail: organizer.email,
+    organizerEmployeeId: actor.id,
+    meetingStatus: "approved_sync_pending",
+    calendarSyncStatus: "pending",
+    pendingSyncAction: meeting.graphEventId ? "update" : "create",
+    hrResponse: response || meeting.hrResponse,
+    lastSyncError: null,
+    joinUrl: meeting.graphEventId ? meeting.joinUrl : null,
+  };
+  const tickets = state.tickets.map((item) =>
+    item.id === id
+      ? patchMeetingTicket(
+          item,
+          nextMeeting,
+          hist(actor.id, "Approved", `Approved for ${formatMeetingSlot(slot)}. Calendar sync pending.${response ? ` Note: ${response}` : ""}`),
+          "in_progress",
+        )
+      : item,
+  );
+  const notes = [{
+    userId: ticket.employeeId,
+    title: "HR meeting approved",
+    body: `Your request was approved for ${formatMeetingSlot(slot)}. Calendar sync is pending — the meeting is not confirmed in Teams until sync succeeds.`,
+    href: `/tickets/${id}`,
+    kind: "ticket" as const,
+  }];
+  return ok(pushNotes(pushAudit({ ...state, tickets }, actor.id, "tickets", `Approved HR meeting ${ticket.number}.`), notes), "Approved. Calendar sync queued.");
+}
+
+export function rescheduleHrMeeting(
+  state: AppState,
+  id: string,
+  input: { slot: HrMeetingSlot; response?: string; organizerEmail?: string },
+): Outcome {
+  const actor = requireUser(state, "meetings.manage");
+  if (!isEmployee(actor)) return actor;
+  if (!canManageHrMeeting(state, actor)) return fail(state, "Only authorized HR can reschedule meetings.", true);
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  const meeting = ticket.meeting;
+  if (meeting.meetingStatus === "rejected" || meeting.meetingStatus === "cancelled") {
+    return fail(state, "This request is closed.");
+  }
+  const slotError = validateMeetingSlot(input.slot, "reschedule");
+  if (slotError) return fail(state, slotError);
+  const organizer = resolveOrganizerEmail(state, input.organizerEmail ?? meeting.organizerEmail);
+  if (!organizer.ok) return fail(state, organizer.message);
+  const response = (input.response || "").trim();
+  if (!response) return fail(state, "Add a short note explaining the new time.");
+  const nextMeeting: HrMeetingDetails = {
+    ...meeting,
+    confirmed: input.slot,
+    preferred: meeting.preferred,
+    originalPreferred: meeting.originalPreferred || meeting.preferred,
+    organizerEmail: organizer.email,
+    organizerEmployeeId: actor.id,
+    meetingStatus: "rescheduled_sync_pending",
+    calendarSyncStatus: "pending",
+    pendingSyncAction: meeting.graphEventId ? "update" : "create",
+    hrResponse: response,
+    lastSyncError: null,
+  };
+  const tickets = state.tickets.map((item) =>
+    item.id === id
+      ? patchMeetingTicket(
+          item,
+          nextMeeting,
+          hist(actor.id, "Rescheduled", `New time ${formatMeetingSlot(input.slot)}. Original preferred ${formatMeetingSlot(meeting.originalPreferred || meeting.preferred)}. ${response}`),
+          "in_progress",
+        )
+      : item,
+  );
+  const notes = [{
+    userId: ticket.employeeId,
+    title: "HR meeting rescheduled",
+    body: `HR proposed ${formatMeetingSlot(input.slot)}. Calendar sync is pending.`,
+    href: `/tickets/${id}`,
+    kind: "ticket" as const,
+  }];
+  return ok(pushNotes(pushAudit({ ...state, tickets }, actor.id, "tickets", `Rescheduled HR meeting ${ticket.number}.`), notes), "Rescheduled. Calendar sync queued.");
+}
+
+export function rejectHrMeeting(state: AppState, id: string, response: string): Outcome {
+  const actor = requireUser(state, "meetings.manage");
+  if (!isEmployee(actor)) return actor;
+  if (!canManageHrMeeting(state, actor)) return fail(state, "Only authorized HR can reject meeting requests.", true);
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  const meeting = ticket.meeting;
+  if (meeting.meetingStatus === "scheduled" && meeting.graphEventId) {
+    return fail(state, "Cancel the scheduled meeting instead of rejecting it.");
+  }
+  const note = response.trim();
+  if (note.length < 5) return fail(state, "Add a response for the employee (at least a short sentence).");
+  const nextMeeting: HrMeetingDetails = {
+    ...meeting,
+    meetingStatus: "rejected",
+    calendarSyncStatus: meeting.calendarSyncStatus === "synced" ? meeting.calendarSyncStatus : "idle",
+    pendingSyncAction: null,
+    confirmed: null,
+    joinUrl: null,
+    hrResponse: note,
+    lastSyncError: null,
+  };
+  const tickets = state.tickets.map((item) =>
+    item.id === id ? patchMeetingTicket(item, nextMeeting, hist(actor.id, "Rejected", note), "resolved") : item,
+  );
+  const notes = [{
+    userId: ticket.employeeId,
+    title: "HR meeting request declined",
+    body: note,
+    href: `/tickets/${id}`,
+    kind: "ticket" as const,
+  }];
+  return ok(pushNotes(pushAudit({ ...state, tickets }, actor.id, "tickets", `Rejected HR meeting ${ticket.number}.`), notes), "Request rejected.");
+}
+
+export function cancelHrMeeting(state: AppState, id: string, reason: string): Outcome {
+  const actor = requireUser(state);
+  if (!isEmployee(actor)) return actor;
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  const meeting = ticket.meeting;
+  const owner = ticket.employeeId === actor.id;
+  const hr = canManageHrMeeting(state, actor);
+  if (!owner && !hr) return fail(state, "You can't cancel this meeting.", true);
+  if (meeting.meetingStatus === "cancelled" || meeting.meetingStatus === "rejected") {
+    return fail(state, "This request is already closed.");
+  }
+  const note = reason.trim();
+  if (note.length < 5) return fail(state, "Add a cancellation reason.");
+  const needsSync = Boolean(meeting.graphEventId);
+  const nextMeeting: HrMeetingDetails = {
+    ...meeting,
+    meetingStatus: "cancelled",
+    calendarSyncStatus: needsSync ? "pending" : "cancelled",
+    pendingSyncAction: needsSync ? "cancel" : null,
+    hrResponse: note,
+    joinUrl: needsSync ? meeting.joinUrl : null,
+    lastSyncError: null,
+  };
+  const tickets = state.tickets.map((item) =>
+    item.id === id
+      ? patchMeetingTicket(item, nextMeeting, hist(actor.id, "Cancelled", note), "resolved")
+      : item,
+  );
+  const notifyIds = owner
+    ? state.employees.filter((item) => canManageHrMeeting(state, item) && item.id !== actor.id).map((item) => item.id)
+    : [ticket.employeeId];
+  const notes = notifyIds.map((userId) => ({
+    userId,
+    title: "HR meeting cancelled",
+    body: note,
+    href: `/tickets/${id}`,
+    kind: "ticket" as const,
+  }));
+  return ok(
+    pushNotes(pushAudit({ ...state, tickets }, actor.id, "tickets", `Cancelled HR meeting ${ticket.number}.`), notes),
+    needsSync ? "Cancelled. Calendar sync queued." : "Meeting request cancelled.",
+  );
+}
+
+export function retryHrMeetingSync(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "meetings.manage");
+  if (!isEmployee(actor)) return actor;
+  if (!canManageHrMeeting(state, actor)) return fail(state, "Only authorized HR can retry calendar sync.", true);
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  const meeting = ticket.meeting;
+  if (meeting.meetingStatus === "rejected") return fail(state, "Rejected requests do not sync to the calendar.");
+  let pending: HrMeetingDetails["pendingSyncAction"] = meeting.pendingSyncAction;
+  let meetingStatus = meeting.meetingStatus;
+  if (meeting.meetingStatus === "cancelled") {
+    pending = meeting.graphEventId ? "cancel" : null;
+  } else if (meeting.confirmed) {
+    pending = meeting.graphEventId ? "update" : "create";
+    meetingStatus = meeting.graphEventId ? "rescheduled_sync_pending" : "approved_sync_pending";
+  } else {
+    return fail(state, "Approve or reschedule before syncing the calendar.");
+  }
+  if (!pending) return fail(state, "Nothing to sync for this request.");
+  const nextMeeting: HrMeetingDetails = {
+    ...meeting,
+    meetingStatus,
+    calendarSyncStatus: "pending",
+    pendingSyncAction: pending,
+    lastSyncError: null,
+  };
+  const tickets = state.tickets.map((item) =>
+    item.id === id ? patchMeetingTicket(item, nextMeeting, hist(actor.id, "Sync retry", "Calendar synchronization queued again.")) : item,
+  );
+  return ok(pushNotes(pushAudit({ ...state, tickets }, actor.id, "tickets", `Retried calendar sync for ${ticket.number}.`), []), "Calendar sync queued.");
+}
+
+export function requestHrMeetingChange(state: AppState, id: string, note: string): Outcome {
+  const actor = requireUser(state, "tickets.self");
+  if (!isEmployee(actor)) return actor;
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || !isHrMeetingTicket(ticket) || !ticket.meeting) return fail(state, "That HR meeting request was not found.", true);
+  if (ticket.employeeId !== actor.id) return fail(state, "Only the requester can ask for a change.", true);
+  const meeting = ticket.meeting;
+  if (meeting.meetingStatus === "rejected" || meeting.meetingStatus === "cancelled") {
+    return fail(state, "This request is closed.");
+  }
+  const body = note.trim();
+  if (body.length < 5) return fail(state, "Describe the change you need.");
+  const tickets = state.tickets.map((item) =>
+    item.id === id
+      ? {
+          ...item,
+          status: "waiting" as const,
+          updatedAt: nowIso(),
+          history: [...item.history, hist(actor.id, "Change requested", body)],
+          meeting: { ...meeting, hrResponse: meeting.hrResponse },
+        }
+      : item,
+  );
+  const notes = state.employees
+    .filter((item) => canManageHrMeeting(state, item))
+    .map((item) => ({
+      userId: item.id,
+      title: "HR meeting change requested",
+      body: `${fullName(actor)} asked to change ${ticket.number}.`,
+      href: `/tickets/meetings?focus=${id}`,
+      kind: "ticket" as const,
+    }));
+  return ok(pushNotes({ ...state, tickets }, notes), "Change request sent to HR.");
+}
+
+export function saveMicrosoft365(state: AppState, patch: Partial<Microsoft365Config>): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeMicrosoft365(state.microsoft365);
+  const allowed = Array.isArray(patch.allowedOrganizerEmails)
+    ? patch.allowedOrganizerEmails.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+    : current.allowedOrganizerEmails;
+  const defaultOrganizer = patch.defaultOrganizerEmail !== undefined
+    ? String(patch.defaultOrganizerEmail).trim().toLowerCase()
+    : current.defaultOrganizerEmail;
+  const next = normalizeMicrosoft365({
+    ...current,
+    enabled: patch.enabled !== undefined ? Boolean(patch.enabled) : current.enabled,
+    tenantId: patch.tenantId !== undefined ? String(patch.tenantId).trim() : current.tenantId,
+    clientId: patch.clientId !== undefined ? String(patch.clientId).trim() : current.clientId,
+    defaultOrganizerEmail: defaultOrganizer,
+    allowedOrganizerEmails: allowed.length ? allowed : (defaultOrganizer ? [defaultOrganizer] : []),
+    demoMode: patch.demoMode !== undefined ? Boolean(patch.demoMode) : current.demoMode,
+    lastHealthCheck: current.lastHealthCheck,
+  });
+  return ok(
+    pushAudit({ ...state, microsoft365: next }, actor.id, "settings", "Updated Microsoft 365 / Teams calendar settings."),
+    "Microsoft 365 settings saved.",
+  );
+}
+
+export function recordMicrosoft365Health(
+  state: AppState,
+  check: { ok: boolean; message: string },
+): Outcome {
+  const actor = requireUser(state, "settings.org");
+  if (!isEmployee(actor)) return actor;
+  const current = normalizeMicrosoft365(state.microsoft365);
+  return ok({
+    ...state,
+    microsoft365: {
+      ...current,
+      lastHealthCheck: { ok: check.ok, at: nowIso(), message: check.message },
+    },
+  });
 }
 
 export function addTicketComment(state: AppState, id: string, body: string): Outcome {

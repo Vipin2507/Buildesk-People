@@ -20,6 +20,7 @@ import { ForgotPassword, SignIn } from "./pages/SignIn";
 import { Policies, PolicyDetail } from "./pages/Policies";
 import { UserDetail, Users } from "./pages/Users";
 import { AssetDetail } from "./pages/Assets";
+import { HrMeetings } from "./pages/HrMeetings";
 import { TicketDetail } from "./pages/TicketDetail";
 import { Tickets } from "./pages/Tickets";
 import { StoreProvider, useApp } from "./store/store";
@@ -44,6 +45,7 @@ export function App() {
                 <Route path="payroll/:runId" element={<Payroll />} />
                 <Route path="expenses" element={<Expenses />} />
                 <Route path="tickets" element={<Tickets />} />
+                <Route path="tickets/meetings" element={<HrMeetings />} />
                 <Route path="tickets/:id" element={<TicketDetail />} />
                 <Route path="assets" element={<Assets />} />
                 <Route path="assets/:id" element={<AssetDetail />} />

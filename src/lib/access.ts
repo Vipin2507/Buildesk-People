@@ -29,6 +29,7 @@ export const PERMISSIONS: PermissionMeta[] = [
   { id: "insurance.manage", group: "Insurance", label: "Manage insurance", description: "Maintain enrollment, dependents, and renewal dates." },
   { id: "tickets.self", group: "Tickets", label: "Own tickets", description: "Create tickets and follow own requests." },
   { id: "tickets.manage", group: "Tickets", label: "Handle tickets", description: "Assign and update tickets. Payroll admins are limited to payroll tickets." },
+  { id: "meetings.manage", group: "Tickets", label: "Manage HR meetings", description: "Approve, reschedule, reject, and cancel HR meeting requests and calendar sync." },
   { id: "assets.self", group: "Assets", label: "Own assets", description: "View assigned assets and acknowledge them." },
   { id: "assets.manage", group: "Assets", label: "Manage assets", description: "Maintain the asset register and assignments." },
   { id: "policies.view", group: "Policies", label: "View policies", description: "Read published policies that apply to you." },
@@ -153,10 +154,16 @@ export function grantHrAdminAccess(state: AppState): { state: AppState; changed:
   }
   for (const role of ["hr", "admin"] as const) {
     const list = rolePermissions[role] ?? [];
-    if (!list.includes("automation.manage")) {
-      rolePermissions = { ...rolePermissions, [role]: [...list, "automation.manage"] };
+    let next = list;
+    if (!next.includes("automation.manage")) {
+      next = [...next, "automation.manage"];
       changed = true;
     }
+    if (!next.includes("meetings.manage")) {
+      next = [...next, "meetings.manage"];
+      changed = true;
+    }
+    if (next !== list) rolePermissions = { ...rolePermissions, [role]: next };
   }
   if (!changed) return { state, changed: false };
   return {
@@ -198,8 +205,16 @@ export function canReview(
 
 export function canManageTicket(state: AppState, actor: Employee | null, ticket: Ticket): boolean {
   if (!actor || !hasPermission(state, actor, "tickets.manage")) return false;
+  if (ticket.kind === "hr_meeting") {
+    return hasPermission(state, actor, "meetings.manage") && (actor.role === "hr" || actor.role === "admin");
+  }
   if (actor.role === "payroll") return ticket.category === "Payroll";
   return actor.role === "hr" || actor.role === "admin";
+}
+
+export function canManageHrMeeting(state: AppState, actor: Employee | null): boolean {
+  if (!actor) return false;
+  return hasPermission(state, actor, "meetings.manage") && (actor.role === "hr" || actor.role === "admin");
 }
 
 export function canSeeBirthday(viewer: Employee | null, person: Employee, sensitive: boolean): boolean {

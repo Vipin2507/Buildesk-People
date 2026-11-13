@@ -24,6 +24,7 @@ export type Permission =
   | "insurance.manage"
   | "tickets.self"
   | "tickets.manage"
+  | "meetings.manage"
   | "assets.self"
   | "assets.manage"
   | "policies.view"
@@ -122,6 +123,7 @@ export type MasterKind =
   | "event_types"
   | "payroll_earnings"
   | "payroll_deductions"
+  | "hr_meeting_topics"
   | "notification_categories";
 
 export type MastersCatalog = Record<MasterKind, MasterValue[]>;
@@ -394,6 +396,54 @@ export interface InsuranceRecord {
   notes: string;
 }
 
+/** Standard helpdesk ticket vs HR meeting/call request. */
+export type TicketKind = "support" | "hr_meeting";
+
+export type HrMeetingRequestType = "teams" | "phone";
+
+export type HrMeetingStatus =
+  | "submitted"
+  | "awaiting_hr"
+  | "approved_sync_pending"
+  | "scheduled"
+  | "rescheduled_sync_pending"
+  | "rejected"
+  | "cancelled"
+  | "sync_failed";
+
+export type CalendarSyncStatus = "idle" | "pending" | "synced" | "failed" | "cancelled" | "not_connected";
+
+export interface HrMeetingSlot {
+  date: string;
+  startTime: string;
+  durationMinutes: number;
+  timezone: string;
+}
+
+export interface HrMeetingDetails {
+  requestType: HrMeetingRequestType;
+  topic: string;
+  preferred: HrMeetingSlot;
+  alternative: HrMeetingSlot | null;
+  confirmed: HrMeetingSlot | null;
+  /** Original preferred slot preserved when HR reschedules. */
+  originalPreferred: HrMeetingSlot;
+  contactNote: string;
+  meetingStatus: HrMeetingStatus;
+  organizerEmail: string | null;
+  organizerEmployeeId: string | null;
+  graphEventId: string | null;
+  joinUrl: string | null;
+  webLink: string | null;
+  calendarSyncStatus: CalendarSyncStatus;
+  syncAttemptCount: number;
+  lastSyncError: string | null;
+  lastSyncedAt: string | null;
+  idempotencyKey: string;
+  hrResponse: string;
+  pendingSyncAction: "create" | "update" | "cancel" | null;
+}
+
 export interface Ticket {
   id: string;
   number: string;
@@ -408,6 +458,25 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   history: HistoryEvent[];
+  /** Defaults to support for older tickets. */
+  kind?: TicketKind;
+  meeting?: HrMeetingDetails | null;
+}
+
+/** Non-secret Microsoft 365 / Teams calendar connection settings (client secret stays in env). */
+export interface Microsoft365Config {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  defaultOrganizerEmail: string;
+  allowedOrganizerEmails: string[];
+  /** When true or credentials missing, UI shows Not connected / Demo mode — never fake join links. */
+  demoMode: boolean;
+  lastHealthCheck?: {
+    ok: boolean;
+    at: string;
+    message: string;
+  };
 }
 
 export interface Asset {
@@ -665,6 +734,8 @@ export interface AppState {
   masters?: MastersCatalog;
   /** WhatsApp (WAHA) + email (n8n webhook) automation. Normalized on read for older workspaces. */
   automation?: import("./types/automation").AutomationConfig;
+  /** Microsoft 365 / Teams calendar (non-secret fields). Client secret uses env only. */
+  microsoft365?: Microsoft365Config;
 }
 
 export type Result = { ok: true; id?: string } | { ok: false; message: string };

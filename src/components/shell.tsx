@@ -46,6 +46,7 @@ const NAV = [
 
 function sectionTitle(pathname: string): string {
   if (pathname.startsWith("/people")) return "People";
+  if (pathname.startsWith("/tickets/meetings")) return "HR Meetings";
   if (pathname.startsWith("/tickets")) return "Tickets";
   if (pathname.startsWith("/payroll")) return "Payroll";
   if (pathname.startsWith("/notifications")) return "Notifications";

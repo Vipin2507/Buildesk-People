@@ -53,6 +53,14 @@ interface StoreValue {
     addTicketComment: (id: string, body: string) => Promise<Result>;
     updateTicket: (id: string, patch: Parameters<typeof m.updateTicket>[2]) => Promise<Result>;
     reopenTicket: (id: string) => Promise<Result>;
+    approveHrMeeting: (id: string, input?: Parameters<typeof m.approveHrMeeting>[2]) => Promise<Result>;
+    rescheduleHrMeeting: (id: string, input: Parameters<typeof m.rescheduleHrMeeting>[2]) => Promise<Result>;
+    rejectHrMeeting: (id: string, response: string) => Promise<Result>;
+    cancelHrMeeting: (id: string, reason: string) => Promise<Result>;
+    retryHrMeetingSync: (id: string) => Promise<Result>;
+    requestHrMeetingChange: (id: string, note: string) => Promise<Result>;
+    saveMicrosoft365: (patch: Parameters<typeof m.saveMicrosoft365>[1]) => Promise<Result>;
+    testMicrosoft365: () => Promise<{ ok: boolean; message: string }>;
     saveAsset: (input: Parameters<typeof m.saveAsset>[1]) => Promise<Result>;
     saveDocument: (input: Parameters<typeof m.saveDocument>[1]) => Promise<Result>;
     savePolicy: (input: Parameters<typeof m.savePolicy>[1]) => Promise<Result>;
@@ -110,6 +118,7 @@ interface StoreValue {
       email?: string;
       phone?: string;
     }) => Promise<{ ok: boolean; message: string }>;
+    runAttendanceReminder: (kind: "login" | "logout", force?: boolean) => Promise<{ ok: boolean; message: string }>;
   };
 }
 
@@ -255,6 +264,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     markExpensePaid: (id) => run("markExpensePaid", { id }),
     saveInsurance: (input) => run("saveInsurance", input),
     createTicket: (input) => run("createTicket", input),
+    approveHrMeeting: (id, input) => run("approveHrMeeting", { id, ...(input ?? {}) }),
+    rescheduleHrMeeting: (id, input) => run("rescheduleHrMeeting", { id, ...input }),
+    rejectHrMeeting: (id, response) => run("rejectHrMeeting", { id, response }),
+    cancelHrMeeting: (id, reason) => run("cancelHrMeeting", { id, reason }),
+    retryHrMeetingSync: (id) => run("retryHrMeetingSync", { id }),
+    requestHrMeetingChange: (id, note) => run("requestHrMeetingChange", { id, note }),
+    saveMicrosoft365: (patch) => run("saveMicrosoft365", patch),
+    testMicrosoft365: async () => {
+      const { payload } = await request("/api/microsoft365/test", {});
+      const data = payload as { ok?: boolean; message?: string; state?: AppState };
+      if (data.state) setState(data.state);
+      return { ok: Boolean(data.ok), message: data.message || (data.ok ? "Connected." : "Connection failed.") };
+    },
     addTicketComment: (id, body) => run("addTicketComment", { id, body }),
     updateTicket: (id, patch) => run("updateTicket", { id, patch }),
     reopenTicket: (id) => run("reopenTicket", { id }),
@@ -377,6 +399,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const { status, payload } = await request("/api/automation/test", input);
       if (payload.state) adopt(payload.state);
       const message = payload.message ?? (status === 200 ? "Test finished." : "Test failed.");
+      pushToast(message, payload.ok ? "success" : "error");
+      return { ok: Boolean(payload.ok), message };
+    },
+    runAttendanceReminder: async (kind, force = true) => {
+      const { payload } = await request("/api/automation/attendance-reminder", { kind, force });
+      if (payload.state) adopt(payload.state);
+      const message = payload.message ?? (payload.ok ? "Reminder finished." : "Reminder did not send.");
       pushToast(message, payload.ok ? "success" : "error");
       return { ok: Boolean(payload.ok), message };
     },

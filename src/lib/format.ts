@@ -74,6 +74,19 @@ const LABELS: Record<string, string> = {
   whatsapp: "WhatsApp",
   email: "Email",
   automation: "Automation",
+  submitted: "Submitted",
+  awaiting_hr: "Awaiting HR",
+  approved_sync_pending: "Approved · Calendar sync pending",
+  scheduled: "Scheduled",
+  rescheduled_sync_pending: "Rescheduled · Calendar sync pending",
+  cancelled: "Cancelled",
+  sync_failed: "Calendar sync failed",
+  teams: "Teams meeting",
+  idle: "Not synced",
+  synced: "Synced",
+  not_connected: "Not connected",
+  hr_meeting: "HR meeting",
+  support: "Support",
 };
 
 const TONES: Record<string, string> = {
@@ -122,6 +135,20 @@ const TONES: Record<string, string> = {
   retrying: "amber",
   whatsapp: "green",
   email: "blue",
+  submitted: "blue",
+  awaiting_hr: "blue",
+  approved_sync_pending: "amber",
+  scheduled: "green",
+  rescheduled_sync_pending: "amber",
+  cancelled: "red",
+  sync_failed: "red",
+  teams: "blue",
+  phone: "blue",
+  idle: "gray",
+  synced: "green",
+  not_connected: "amber",
+  hr_meeting: "blue",
+  support: "gray",
 };
 
 export function labelFor(value: string): string {

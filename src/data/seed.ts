@@ -169,5 +169,13 @@ export function createSeed(): AppState {
     },
     masters: defaultMasters(),
     automation: defaultAutomationConfig(),
+    microsoft365: {
+      enabled: false,
+      tenantId: "",
+      clientId: "",
+      defaultOrganizerEmail: "",
+      allowedOrganizerEmails: [],
+      demoMode: true,
+    },
   };
 }

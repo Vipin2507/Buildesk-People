@@ -535,48 +535,144 @@ function SecuritySettings({ onDirty }: { onDirty: (dirty: boolean) => void }) {
 }
 
 function IntegrationsSettings() {
-  const { state, can } = useApp();
+  const { state, can, actions } = useApp();
   const automation = state.automation;
   const waha = automation?.waha;
   const emailReady = Boolean(automation?.settings.n8nWebhookBase?.trim()) && Boolean(automation?.endpoints?.some((item) => item.channel === "email" && item.isEnabled));
   const wahaOk = Boolean(waha?.isEnabled && waha.apiUrl?.trim() && waha.sessionName?.trim());
+  const ms = state.microsoft365 ?? {
+    enabled: false,
+    tenantId: "",
+    clientId: "",
+    defaultOrganizerEmail: "",
+    allowedOrganizerEmails: [],
+    demoMode: true,
+  };
+  const [enabled, setEnabled] = useState(ms.enabled);
+  const [demoMode, setDemoMode] = useState(ms.demoMode);
+  const [tenantId, setTenantId] = useState(ms.tenantId);
+  const [clientId, setClientId] = useState(ms.clientId);
+  const [defaultOrganizerEmail, setDefaultOrganizer] = useState(ms.defaultOrganizerEmail);
+  const [allowedText, setAllowedText] = useState((ms.allowedOrganizerEmails || []).join("\n"));
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const [testing, setTesting] = useState(false);
+  const uiConnected = enabled && !demoMode && Boolean(tenantId.trim() && clientId.trim() && defaultOrganizerEmail.trim());
+
   return (
-    <section className="panel">
-      <h2>Integrations</h2>
-      <p className="muted">Connection status for configured channels. Credentials are not shown here.</p>
-      <div className="notice split">
-        <div>
-          <strong>WhatsApp (WAHA)</strong>
-          <div className="muted">{wahaOk ? `Enabled · session ${waha?.sessionName}` : "Not configured or disabled"}</div>
+    <div className="stack">
+      <section className="panel">
+        <h2>Integrations</h2>
+        <p className="muted">Connection status for configured channels. Client secrets and tokens are never shown here.</p>
+        <div className="notice split">
+          <div>
+            <strong>WhatsApp (WAHA)</strong>
+            <div className="muted">{wahaOk ? `Enabled · session ${waha?.sessionName}` : "Not configured or disabled"}</div>
+          </div>
+          <StatusTone ok={wahaOk} />
         </div>
-        <StatusTone ok={wahaOk} />
-      </div>
-      <div className="notice split">
-        <div>
-          <strong>Email (n8n webhook)</strong>
-          <div className="muted">{emailReady ? "Webhook base and email endpoint enabled" : "Not configured"}</div>
+        <div className="notice split">
+          <div>
+            <strong>Email (n8n webhook)</strong>
+            <div className="muted">{emailReady ? "Webhook base and email endpoint enabled" : "Not configured"}</div>
+          </div>
+          <StatusTone ok={emailReady} />
         </div>
-        <StatusTone ok={emailReady} />
-      </div>
-      <div className="notice split">
-        <div>
-          <strong>Teams / calendar sync</strong>
-          <div className="muted">Not configured in this build.</div>
+        <div className="notice split">
+          <div>
+            <strong>Microsoft 365 / Teams calendar</strong>
+            <div className="muted">
+              {uiConnected
+                ? `Organizer ${defaultOrganizerEmail || "—"} · tenant configured`
+                : demoMode || !enabled
+                  ? "Not connected / Demo mode — approvals will not create real Teams events"
+                  : "Incomplete configuration"}
+            </div>
+            {ms.lastHealthCheck && (
+              <div className="faint">Last check {formatDateTime(ms.lastHealthCheck.at)}: {ms.lastHealthCheck.message}</div>
+            )}
+          </div>
+          <span className={`badge tone-${uiConnected ? "green" : "amber"}`}>{uiConnected ? "Configured" : "Not connected"}</span>
         </div>
-        <span className="badge tone-gray">Not configured</span>
-      </div>
-      <div className="notice split">
-        <div>
-          <strong>File storage</strong>
-          <div className="muted">Profile photos and attachments use the Buildesk People server store.</div>
+        <div className="notice split">
+          <div>
+            <strong>File storage</strong>
+            <div className="muted">Profile photos and attachments use the Buildesk People server store.</div>
+          </div>
+          <span className="badge tone-green">Connected</span>
         </div>
-        <span className="badge tone-green">Connected</span>
-      </div>
-      <div className="actions">
-        {can("automation.manage") && <Link className="btn btn-primary" to="/automation">Open Automation</Link>}
-        <Link className="btn btn-secondary" to="/settings?tab=notifications">Notification preferences</Link>
-      </div>
-    </section>
+        <div className="actions">
+          {can("automation.manage") && <Link className="btn btn-primary" to="/automation">Open Automation</Link>}
+          <Link className="btn btn-secondary" to="/settings?tab=notifications">Notification preferences</Link>
+        </div>
+      </section>
+
+      {can("settings.org") && (
+        <section className="panel">
+          <h2>Microsoft 365 / Teams</h2>
+          <p className="muted">
+            Uses Microsoft Graph application permissions against a designated HR organizer mailbox.
+            Set <code>MICROSOFT_CLIENT_SECRET</code> (or <code>AZURE_CLIENT_SECRET</code>) in the server environment — never in the browser.
+            Required Graph application permissions (admin consent): <code>Calendars.ReadWrite</code>, <code>User.Read.All</code> (for Test connection). Prefer mailbox scoping via Exchange application access policies.
+          </p>
+          {error && <Banner tone="error">{error}</Banner>}
+          {saved && <Banner tone="success">{saved}</Banner>}
+          {testMsg && <Banner tone={testMsg.startsWith("Connected") ? "success" : "warning"}>{testMsg}</Banner>}
+          <label className="check">
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+            Enable Microsoft 365 calendar sync
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={demoMode} onChange={(event) => setDemoMode(event.target.checked)} />
+            Demo mode (never claim real Teams events or join links)
+          </label>
+          <div className="form-grid">
+            <Field label="Directory (tenant) ID">
+              <input value={tenantId} onChange={(event) => setTenantId(event.target.value)} autoComplete="off" />
+            </Field>
+            <Field label="Application (client) ID">
+              <input value={clientId} onChange={(event) => setClientId(event.target.value)} autoComplete="off" />
+            </Field>
+          </div>
+          <Field label="Default HR organizer mailbox" hint="Calendar events are created in this mailbox. Does not have to be the signed-in HR user.">
+            <input value={defaultOrganizerEmail} onChange={(event) => setDefaultOrganizer(event.target.value)} placeholder="hr@contoso.com" />
+          </Field>
+          <Field label="Allowed organizer mailboxes" hint="One email per line. Approvals can only use these organizers.">
+            <textarea value={allowedText} onChange={(event) => setAllowedText(event.target.value)} rows={4} />
+          </Field>
+          <div className="actions">
+            <Button onClick={async () => {
+              setError("");
+              setSaved("");
+              const result = await actions.saveMicrosoft365({
+                enabled,
+                demoMode,
+                tenantId,
+                clientId,
+                defaultOrganizerEmail,
+                allowedOrganizerEmails: allowedText.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean),
+              });
+              if (!result.ok) setError(result.message);
+              else setSaved("Microsoft 365 settings saved.");
+            }}>Save Microsoft 365 settings</Button>
+            <Button
+              variant="secondary"
+              disabled={testing}
+              onClick={async () => {
+                setTesting(true);
+                setTestMsg("");
+                const result = await actions.testMicrosoft365();
+                setTestMsg(result.message);
+                setTesting(false);
+              }}
+            >
+              Test connection
+            </Button>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
