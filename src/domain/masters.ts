@@ -165,6 +165,7 @@ export function normalizeOrgSettings(settings: OrgSettings): OrgSettings {
   return {
     ...settings,
     timezone: settings.timezone?.trim() || "Asia/Kolkata",
+    workEnd: settings.workEnd && /^\d{2}:\d{2}$/.test(settings.workEnd) ? settings.workEnd : settings.workEnd === "" ? "" : (settings.workEnd ?? "18:30"),
     halfDayPolicy: {
       thresholdHours: settings.halfDayPolicy?.thresholdHours ?? null,
       allowEmployeeRequest: settings.halfDayPolicy?.allowEmployeeRequest !== false,

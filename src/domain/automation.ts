@@ -15,6 +15,8 @@ export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
   "leave-rejected": "Leave rejected",
   "attendance-correction-submitted": "Attendance correction submitted",
   "attendance-correction-decided": "Attendance correction decided",
+  "attendance-login-reminder": "Attendance login reminder",
+  "attendance-logout-reminder": "Attendance logout reminder",
   "expense-submitted": "Expense submitted",
   "expense-approved": "Expense approved",
   "expense-rejected": "Expense rejected",
@@ -52,6 +54,9 @@ export const TEMPLATE_VARIABLE_HELP = [
   "{{policyTitle}}",
   "{{assetName}}",
   "{{mobile}}",
+  "{{workStart}}",
+  "{{workEnd}}",
+  "{{reminderTime}}",
 ];
 
 export function renderAutomationTemplate(template: string, vars: Record<string, string | undefined>): string {
@@ -84,6 +89,9 @@ export function sampleAutomationVars(input: {
     policyTitle: "Sample HR policy",
     assetName: "Laptop (test)",
     mobile: input.mobile ?? "",
+    workStart: "09:30",
+    workEnd: "18:30",
+    reminderTime: "09:15",
   };
 }
 
@@ -155,10 +163,18 @@ export function normalizeAutomationConfig(raw: AutomationConfig | undefined | nu
       apiKey: raw.waha?.apiKey ?? "",
       isEnabled: Boolean(raw.waha?.isEnabled),
     },
-    rules: Array.isArray(raw.rules) && raw.rules.length > 0 ? raw.rules : defaults.rules,
+    rules: mergeAutomationRules(Array.isArray(raw.rules) ? raw.rules : [], defaults.rules),
     logs: Array.isArray(raw.logs) ? raw.logs.slice(0, AUTOMATION_LOG_CAP) : [],
     updatedAt: raw.updatedAt ?? defaults.updatedAt,
   };
+}
+
+/** Keep existing rules; append any missing default rule ids (e.g. new attendance reminders). */
+export function mergeAutomationRules(existing: AutomationRule[], defaults: AutomationRule[]): AutomationRule[] {
+  if (existing.length === 0) return defaults;
+  const seen = new Set(existing.map((item) => item.id));
+  const extras = defaults.filter((item) => !seen.has(item.id));
+  return extras.length ? [...existing, ...extras] : existing;
 }
 
 export function ensureAutomation(state: AppState): AppState {

@@ -230,6 +230,8 @@ export interface OrgSettings {
   /** Optional note printed in the payslip note area. */
   payslipNotes?: string;
   workStart: string;
+  /** Workday end as HH:MM (Asia/Kolkata). Used for logout reminders; optional until configured. */
+  workEnd?: string;
   graceMinutes: number;
   weeklyOff: number[];
   payrollStartDay: number;

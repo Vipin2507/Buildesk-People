@@ -179,6 +179,7 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
   const { state, actions } = useApp();
   const policy = state.settings.halfDayPolicy;
   const [workStart, setStart] = useState(state.settings.workStart);
+  const [workEnd, setEnd] = useState(state.settings.workEnd ?? "18:30");
   const [grace, setGrace] = useState(state.settings.graceMinutes);
   const [days, setDays] = useState(state.settings.weeklyOff);
   const [locationRequired, setLocationRequired] = useState(state.settings.attendanceLocationRequired);
@@ -194,6 +195,7 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
     const baselineRetention = state.settings.locationRetentionDays == null ? "" : String(state.settings.locationRetentionDays);
     const baselineThreshold = state.settings.halfDayPolicy?.thresholdHours == null ? "" : String(state.settings.halfDayPolicy.thresholdHours);
     const dirty = workStart !== state.settings.workStart
+      || workEnd !== (state.settings.workEnd ?? "18:30")
       || grace !== state.settings.graceMinutes
       || JSON.stringify([...days].sort()) !== JSON.stringify([...state.settings.weeklyOff].sort())
       || locationRequired !== state.settings.attendanceLocationRequired
@@ -202,7 +204,7 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
       || allowHalf !== (state.settings.halfDayPolicy?.allowEmployeeRequest !== false)
       || effectiveDate !== (state.settings.halfDayPolicy?.effectiveDate ?? "");
     onDirty(dirty);
-  }, [workStart, grace, days, locationRequired, retention, threshold, allowHalf, effectiveDate, state.settings, onDirty]);
+  }, [workStart, workEnd, grace, days, locationRequired, retention, threshold, allowHalf, effectiveDate, state.settings, onDirty]);
 
   const save = async () => {
     const trimmed = retention.trim();
@@ -215,6 +217,7 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
     };
     const result = await actions.updateSettings({
       workStart,
+      workEnd,
       graceMinutes: grace,
       weeklyOff: days,
       attendanceLocationRequired: locationRequired,
@@ -232,8 +235,11 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
     <div className="grid-2">
       <section className="panel">
         <h2>Work schedule</h2>
-        <p className="muted">Applied to late detection, weekly offs, and attendance summaries.</p>
+        <p className="muted">Applied to late detection, weekly offs, attendance summaries, and login/logout reminder automation (15 minutes before start and end).</p>
         <Field label="Workday starts"><TimePicker value={workStart} onChange={setStart} /></Field>
+        <Field label="Workday ends" hint="Required for logout reminders. Times use the Asia/Kolkata office clock.">
+          <TimePicker value={workEnd} onChange={setEnd} />
+        </Field>
         <Field label="Grace minutes"><input type="number" min={0} value={grace} onChange={(event) => setGrace(Number(event.target.value))} /></Field>
         <p>Weekly off</p>
         <div className="actions">
@@ -280,7 +286,10 @@ function WorkAttendanceForm({ onDirty }: { onDirty: (dirty: boolean) => void }) 
               <p>These settings affect late detection, weekly offs, punch location policy, and half-day request availability. Historical punches and finalized payroll are not recalculated automatically.</p>
               <ul className="muted">
                 <li>Workday start: {workStart}</li>
+                <li>Workday end: {workEnd}</li>
                 <li>Grace: {grace} minutes</li>
+                <li>Login reminder: 15 minutes before {workStart}</li>
+                <li>Logout reminder: 15 minutes before {workEnd}</li>
                 <li>Weekly off days: {days.map((day) => names[day]).join(", ") || "None"}</li>
                 <li>Half-day threshold: {threshold.trim() === "" ? "Not configured" : `${threshold} hours`}</li>
               </ul>

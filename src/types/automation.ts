@@ -11,6 +11,8 @@ export type AutomationTrigger =
   | "leave-rejected"
   | "attendance-correction-submitted"
   | "attendance-correction-decided"
+  | "attendance-login-reminder"
+  | "attendance-logout-reminder"
   | "expense-submitted"
   | "expense-approved"
   | "expense-rejected"
@@ -33,6 +35,11 @@ export type AutomationSettings = {
   emailCc?: string;
   emailFromAddress?: string;
   emailFromName?: string;
+  /** Office-local YYYY-MM-DD of the last login/logout reminder batch (dedupe). */
+  attendanceReminderSent?: {
+    loginOn?: string;
+    logoutOn?: string;
+  };
 };
 
 export type WahaHealthCheck = {

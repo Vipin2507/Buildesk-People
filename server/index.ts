@@ -865,4 +865,10 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Buildesk People listening on http://${HOST}:${PORT}`);
+  void import("./attendance-reminders.ts").then(({ startAttendanceReminderScheduler }) => {
+    startAttendanceReminderScheduler();
+    console.log("Attendance reminder scheduler started (login/logout −15 min, Asia/Kolkata).");
+  }).catch(() => {
+    // Scheduler is optional relative to serving the API.
+  });
 });

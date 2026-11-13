@@ -110,7 +110,7 @@ function Overview({ onOpenChannels, onOpenRules }: { onOpenChannels: () => void;
       <Panel title="Next step" action={<Button variant="secondary" onClick={onOpenChannels}>Open channels</Button>}>
         <p>{next}</p>
         <Banner tone="info">
-          Email automation posts JSON to n8n. SMTP lives in n8n, not in Buildesk People. WhatsApp sends go through WAHA with a short pause between messages.
+          Email automation posts JSON to n8n. SMTP lives in n8n, not in Buildesk People. WhatsApp sends go through WAHA with a short pause between messages. Attendance login/logout reminders fire for the whole active team 15 minutes before work start and end (Asia/Kolkata), once you enable the global switch and WAHA.
         </Banner>
         <div className="actions">
           <Button onClick={onOpenRules}>Manage rules</Button>
@@ -400,6 +400,20 @@ function Rules() {
               <Field label="Description" className="span-2">
                 <input value={editor.description ?? ""} onChange={(event) => setEditor({ ...editor, description: event.target.value })} />
               </Field>
+              {(editor.trigger === "attendance-login-reminder" || editor.trigger === "attendance-logout-reminder") && (
+                <Field
+                  label="Minutes before start/end"
+                  hint="Scheduler uses workday start or end from Settings → Work & attendance. Default is 15."
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={editor.offsetMinutes ?? 15}
+                    onChange={(event) => setEditor({ ...editor, offsetMinutes: Number(event.target.value) || 15 })}
+                  />
+                </Field>
+              )}
             </div>
             <div className="spread" style={{ marginTop: 8 }}>
               <strong>Message body</strong>
@@ -618,7 +632,7 @@ function Guide() {
         <p>
           CRM-only modules from Compass (bookings, win-back, payment digests) are not ported here. This page uses the same channel model for Buildesk People HR events.
         </p>
-        <p className="muted"><Activity size={16} style={{ verticalAlign: "text-bottom" }} /> Scheduler hooks can be extended later for offset reminders; event-driven paths are live today.</p>
+        <p className="muted"><Activity size={16} style={{ verticalAlign: "text-bottom" }} /> Attendance login/logout reminders run on the Asia/Kolkata office clock (default 15 minutes before work start and end). Other flows stay event-driven after HR actions.</p>
       </Panel>
     </div>
   );

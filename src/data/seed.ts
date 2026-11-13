@@ -142,6 +142,7 @@ export function createSeed(): AppState {
       currency: "INR",
       timezone: "Asia/Kolkata",
       workStart: "09:30",
+      workEnd: "18:30",
       graceMinutes: 15,
       weeklyOff: [0, 6],
       payrollStartDay: 1,

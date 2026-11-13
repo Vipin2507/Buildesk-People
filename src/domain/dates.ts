@@ -13,7 +13,7 @@ export function parseISODate(iso: string): Date {
 /** Office clock for attendance. A UTC server still records India time. */
 const OFFICE_TZ = "Asia/Kolkata";
 
-function officeParts(d = new Date()): { year: string; month: string; day: string; hour: string; minute: string } {
+export function officeParts(d = new Date()): { year: string; month: string; day: string; hour: string; minute: string } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: OFFICE_TZ,
     year: "numeric",
@@ -66,6 +66,18 @@ export function nowIso(): string {
 export function minutesOf(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
+}
+
+export function hhmmFromMinutes(total: number): string {
+  const normalized = ((Math.floor(total) % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h = Math.floor(normalized / 60);
+  const m = normalized % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** Subtract minutes from an HH:MM clock time (wraps within the day). */
+export function subtractMinutesHhmm(hhmmValue: string, minutes: number): string {
+  return hhmmFromMinutes(minutesOf(hhmmValue) - minutes);
 }
 
 export function hhmm(value: string | null): string | null {

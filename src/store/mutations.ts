@@ -1482,6 +1482,18 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
   if (patch.orgName !== undefined && patch.orgName.trim().length < 2) return fail(state, "Enter the organization name.");
   if (patch.currency !== undefined && !/^[A-Z]{3}$/.test(patch.currency)) return fail(state, "Use a three-letter currency code such as INR.");
   if (patch.workStart !== undefined && !/^\d{2}:\d{2}$/.test(patch.workStart)) return fail(state, "Enter the workday start as HH:MM.");
+  if (patch.workEnd !== undefined && patch.workEnd !== "" && !/^\d{2}:\d{2}$/.test(patch.workEnd)) {
+    return fail(state, "Enter the workday end as HH:MM, or leave it blank.");
+  }
+  {
+    const start = patch.workStart ?? state.settings.workStart;
+    const end = patch.workEnd !== undefined ? patch.workEnd : (state.settings.workEnd ?? "");
+    if (start && end && /^\d{2}:\d{2}$/.test(start) && /^\d{2}:\d{2}$/.test(end)) {
+      const startMin = Number(start.slice(0, 2)) * 60 + Number(start.slice(3));
+      const endMin = Number(end.slice(0, 2)) * 60 + Number(end.slice(3));
+      if (endMin <= startMin) return fail(state, "Workday end must be after workday start.");
+    }
+  }
   if (patch.graceMinutes !== undefined && (patch.graceMinutes < 0 || patch.graceMinutes > 180)) return fail(state, "Grace minutes must be between 0 and 180.");
   if (patch.weeklyOff !== undefined) {
     const days = [...new Set(patch.weeklyOff)].filter((day) => day >= 0 && day <= 6);
@@ -1548,7 +1560,7 @@ export function updateSettings(state: AppState, patch: Partial<AppState["setting
       attendance: patch.notificationPrefs.attendance !== false,
     };
   }
-  if ((patch.orgName || patch.workStart || patch.graceMinutes || patch.weeklyOff || patch.currency) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
+  if ((patch.orgName || patch.workStart || patch.workEnd || patch.graceMinutes || patch.weeklyOff || patch.currency) && !hasPermission(state, actor, "settings.org") && !hasPermission(state, actor, "settings.payroll")) {
     return fail(state, "You don't have permission to change these settings.", true);
   }
   next.orgName = (patch.orgName ?? next.orgName).trim();
