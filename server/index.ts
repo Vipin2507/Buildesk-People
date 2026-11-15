@@ -20,7 +20,8 @@ import { testMicrosoftConnection } from "./microsoft-graph.ts";
 import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
 import { normalizeMicrosoft365 } from "../src/domain/hr-meeting.ts";
 import { recordMicrosoft365Health } from "../src/store/mutations.ts";
-import { importHrPoliciesFolder } from "./policy-import.ts";
+import { backfillPolicyExtractionsContent, importHrPoliciesFolder } from "./policy-import.ts";
+import { extractPolicyDocument } from "./policy-extract.ts";
 import { checksumBytes, contentTypeForName, makePolicyFileKey, readPolicyFile, writePolicyFile } from "./policies-store.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
@@ -686,7 +687,7 @@ const server = createServer(async (request, response) => {
         send(response, 403, { ok: false, message: "Only HR can import policy documents." });
         return;
       }
-      const result = importHrPoliciesFolder(state, viewer.id);
+      const result = await importHrPoliciesFolder(state, viewer.id);
       writeWorkspace({ ...result.state, currentUserId: null });
       const imported = result.report.filter((item) => item.ok && !item.skippedDuplicate).length;
       const skipped = result.report.filter((item) => item.skippedDuplicate).length;
@@ -695,6 +696,29 @@ const server = createServer(async (request, response) => {
         ok: failed === 0 || imported + skipped > 0,
         message: `Import finished: ${imported} new, ${skipped} already present, ${failed} failed.`,
         report: result.report,
+        state: presentWorkspace(result.state, accountId),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/policies/backfill-extract") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "policies.manage")) {
+        send(response, 403, { ok: false, message: "Only HR can refresh policy document extraction." });
+        return;
+      }
+      const result = await backfillPolicyExtractionsContent(state);
+      writeWorkspace({ ...result.state, currentUserId: null });
+      send(response, 200, {
+        ok: true,
+        message: result.updated ? `Refreshed extraction for ${result.updated} polic${result.updated === 1 ? "y" : "ies"}.` : "No policies needed extraction updates.",
         state: presentWorkspace(result.state, accountId),
       });
       return;
@@ -810,6 +834,7 @@ const server = createServer(async (request, response) => {
         send(response, 400, { ok: false, message: writeError });
         return;
       }
+      const extracted = await extractPolicyDocument(bytes, fileName);
       const outcome = actions.attachPolicyFileMeta(working, {
         id: policy.id,
         fileKey,
@@ -817,6 +842,9 @@ const server = createServer(async (request, response) => {
         fileSize: bytes.length,
         contentType: type.startsWith("multipart") ? contentTypeForName(fileName) : type,
         checksum: checksumBytes(bytes),
+        content: extracted.content,
+        contentHtml: extracted.contentHtml,
+        renderStatus: extracted.renderStatus,
       });
       if (!outcome.result.ok) {
         send(response, 400, { ok: false, message: outcome.result.message });

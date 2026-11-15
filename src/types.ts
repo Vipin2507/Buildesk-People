@@ -519,11 +519,18 @@ export type PolicyAudience =
   | { kind: "department"; departmentId: string }
   | { kind: "employment_type"; employmentType: EmploymentType };
 
+export type PolicyRenderStatus = "ready" | "partial" | "unavailable" | "pending";
+
 export interface PolicyVersion {
   id: string;
   version: string;
   summary: string;
+  /** Plain-text body for search and fallback reading. */
   content: string;
+  /** Sanitized HTML for in-app reader when extraction succeeded. */
+  contentHtml?: string | null;
+  /** How complete in-app rendering is for this version. */
+  renderStatus?: PolicyRenderStatus;
   fileName: string;
   /** Private storage key under data/policies — never a public URL. */
   fileKey?: string | null;

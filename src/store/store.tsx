@@ -71,6 +71,7 @@ interface StoreValue {
     setPolicyAcknowledgementRequired: (id: string, required: boolean) => Promise<Result>;
     acknowledgePolicy: (id: string) => Promise<Result>;
     importHrPoliciesFolder: () => Promise<{ ok: boolean; message: string; report?: Array<{ fileName: string; ok: boolean; message: string; skippedDuplicate?: boolean }> }>;
+    backfillPolicyExtractions: () => Promise<{ ok: boolean; message: string }>;
     uploadPolicyFile: (policyId: string, file: File) => Promise<Result>;
     downloadPolicyFile: (policyId: string, versionId?: string) => Promise<void>;
     assignAsset: (id: string, employeeId: string) => Promise<Result>;
@@ -306,6 +307,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (data.state) setState(data.state);
       pushToast(data.message || (data.ok ? "Import finished." : "Import failed."), data.ok ? "success" : "error");
       return { ok: Boolean(data.ok), message: data.message || "", report: data.report };
+    },
+    backfillPolicyExtractions: async () => {
+      const { payload } = await request("/api/policies/backfill-extract", {});
+      const data = payload as { ok?: boolean; message?: string; state?: AppState };
+      if (data.state) setState(data.state);
+      pushToast(data.message || "Extraction refresh finished.", data.ok ? "success" : "error");
+      return { ok: Boolean(data.ok), message: data.message || "" };
     },
     uploadPolicyFile: async (policyId, file) => {
       const response = await fetch(`/api/policies/${encodeURIComponent(policyId)}/file`, {

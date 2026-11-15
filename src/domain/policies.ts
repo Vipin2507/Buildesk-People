@@ -172,6 +172,50 @@ export function employeeCanViewPolicy(policy: Policy, employee: Employee, manage
   return policyApplies(policy, employee);
 }
 
+/** Never show import/admin review copy as an employee-facing summary. */
+export function employeeFacingSummary(summary: string | undefined | null): string {
+  const text = (summary || "").trim();
+  if (!text) return "";
+  if (/pending HR review|imported source|needs review|not published/i.test(text)) return "";
+  return text;
+}
+
+export function isUpcomingEffective(effectiveDate: string, today: string): boolean {
+  return Boolean(effectiveDate && effectiveDate > today);
+}
+
+export function canRenderInApp(version: PolicyVersion | undefined | null): boolean {
+  if (!version) return false;
+  if (version.contentHtml && version.contentHtml.trim().length > 40) return true;
+  if (version.content && version.content.trim().length > 40) return true;
+  return false;
+}
+
+export function extractTocFromHtml(html: string): { id: string; label: string; level: number }[] {
+  const items: { id: string; label: string; level: number }[] = [];
+  const re = /<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi;
+  let match: RegExpExecArray | null;
+  let index = 0;
+  while ((match = re.exec(html)) && index < 40) {
+    const label = match[2].replace(/<[^>]+>/g, "").trim();
+    if (!label) continue;
+    const id = `section-${index + 1}`;
+    items.push({ id, label, level: Number(match[1]) });
+    index += 1;
+  }
+  return items;
+}
+
+/** Inject stable ids into heading tags for TOC anchors. */
+export function withHeadingIds(html: string): string {
+  let index = 0;
+  return html.replace(/<h([1-3])([^>]*)>/gi, (_full, level: string, attrs: string) => {
+    index += 1;
+    if (/\sid=/i.test(attrs)) return `<h${level}${attrs}>`;
+    return `<h${level}${attrs} id="section-${index}">`;
+  });
+}
+
 export function publishChecklist(policy: Policy): { id: string; label: string; ok: boolean }[] {
   const draft = draftVersion(policy) ?? latestVersion(policy);
   return [
@@ -182,8 +226,8 @@ export function publishChecklist(policy: Policy): { id: string; label: string; o
     { id: "audience", label: "Audience is configured", ok: Boolean(policy.audience?.kind) },
     {
       id: "content",
-      label: "Content or source file is present",
-      ok: Boolean((draft?.content && draft.content.trim().length >= 20) || draft?.fileKey || draft?.fileName),
+      label: "In-app content or source file is present",
+      ok: Boolean((draft?.content && draft.content.trim().length >= 20) || draft?.contentHtml || draft?.fileKey || draft?.fileName),
     },
   ];
 }

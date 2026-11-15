@@ -2405,7 +2405,16 @@ export function setPolicyAcknowledgementRequired(state: AppState, id: string, re
 export function attachPolicyFileMeta(
   state: AppState,
   id: string,
-  meta: { fileKey: string; fileName: string; fileSize: number; contentType: string; checksum: string },
+  meta: {
+    fileKey: string;
+    fileName: string;
+    fileSize: number;
+    contentType: string;
+    checksum: string;
+    content?: string;
+    contentHtml?: string | null;
+    renderStatus?: import("../types").PolicyRenderStatus;
+  },
 ): Outcome {
   const actor = requireUser(state, "policies.manage");
   if (!isEmployee(actor)) return actor;
@@ -2424,6 +2433,9 @@ export function attachPolicyFileMeta(
           fileSize: meta.fileSize,
           contentType: meta.contentType,
           checksum: meta.checksum,
+          content: meta.content !== undefined ? meta.content : item.content,
+          contentHtml: meta.contentHtml !== undefined ? meta.contentHtml : item.contentHtml,
+          renderStatus: meta.renderStatus ?? item.renderStatus,
         }
       : item,
   );

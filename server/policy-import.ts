@@ -9,7 +9,8 @@ import {
 } from "../src/domain/policies.ts";
 import { nowIso, uid } from "../src/domain/dates.ts";
 import type { AppState, Policy } from "../src/types.ts";
-import { checksumBytes, contentTypeForName, makePolicyFileKey, writePolicyFile } from "./policies-store.ts";
+import { extractPolicyDocument } from "./policy-extract.ts";
+import { checksumBytes, contentTypeForName, makePolicyFileKey, readPolicyFile, writePolicyFile } from "./policies-store.ts";
 
 export const HR_POLICIES_FOLDER = join(process.cwd(), "HR Policies");
 
@@ -31,7 +32,7 @@ function sourceKeyFor(fileName: string, checksum: string): string {
 }
 
 /** Import DOCX/PDF/TXT from the local HR Policies folder. Idempotent by filename+checksum. */
-export function importHrPoliciesFolder(state: AppState, actorId: string): { state: AppState; report: ImportReportItem[] } {
+export async function importHrPoliciesFolder(state: AppState, actorId: string): Promise<{ state: AppState; report: ImportReportItem[] }> {
   const report: ImportReportItem[] = [];
   if (!existsSync(HR_POLICIES_FOLDER)) {
     return {
@@ -102,6 +103,7 @@ export function importHrPoliciesFolder(state: AppState, actorId: string): { stat
       continue;
     }
 
+    const extracted = await extractPolicyDocument(bytes, fileName);
     const policy: Policy = {
       id: policyId,
       title,
@@ -111,8 +113,10 @@ export function importHrPoliciesFolder(state: AppState, actorId: string): { stat
       versions: [{
         id: versionId,
         version: versionLabel,
-        summary: `${title} — imported source document pending HR review.`,
-        content: "",
+        summary: "",
+        content: extracted.content,
+        contentHtml: extracted.contentHtml,
+        renderStatus: extracted.renderStatus,
         fileName,
         fileKey,
         fileSize: bytes.length,
@@ -138,7 +142,9 @@ export function importHrPoliciesFolder(state: AppState, actorId: string): { stat
       fileName,
       ok: true,
       policyId,
-      message: `Imported as Needs review · ${category} · version ${versionLabel}. Not published.`,
+      message: extracted.ok
+        ? `Imported as Needs review · ${category} · version ${versionLabel}. In-app text ready (${extracted.renderStatus}). Not published.`
+        : `Imported as Needs review · ${category}. ${extracted.message} Not published.`,
     });
   }
 
@@ -158,6 +164,46 @@ export function importHrPoliciesFolder(state: AppState, actorId: string): { stat
     state: { ...state, policies, audits },
     report,
   };
+}
+
+/** Re-extract content for versions that have a stored file but empty/unavailable render. Also clears invented import summaries. */
+export async function backfillPolicyExtractionsContent(state: AppState): Promise<{ state: AppState; updated: number }> {
+  let updated = 0;
+  const policies: Policy[] = [];
+  for (const policy of state.policies) {
+    let changed = false;
+    const versions = [];
+    for (const version of policy.versions) {
+      let next = { ...version };
+      if (/pending HR review|imported source document/i.test(next.summary || "")) {
+        next = { ...next, summary: "" };
+        changed = true;
+      }
+      const needsExtract = Boolean(next.fileKey)
+        && (!next.contentHtml || !next.content || next.renderStatus === "unavailable" || next.renderStatus === "pending" || !next.renderStatus);
+      if (needsExtract && next.fileKey) {
+        const bytes = readPolicyFile(next.fileKey);
+        if (bytes) {
+          const extracted = await extractPolicyDocument(bytes, next.fileName || "document.docx");
+          next = {
+            ...next,
+            content: extracted.content || next.content,
+            contentHtml: extracted.contentHtml,
+            renderStatus: extracted.renderStatus,
+          };
+          changed = true;
+        }
+      }
+      versions.push(next);
+    }
+    if (changed) {
+      updated += 1;
+      policies.push({ ...policy, versions, updatedAt: nowIso() });
+    } else {
+      policies.push(policy);
+    }
+  }
+  return { state: { ...state, policies }, updated };
 }
 
 export function folderChecksumPreview(): { fileName: string; checksum: string; bytes: number }[] {
