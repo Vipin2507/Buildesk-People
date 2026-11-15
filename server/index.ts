@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { findAccountByEmail, isValidEmail } from "../src/lib/auth.ts";
 import { canEditPhoto, canOpenProfile, hasPermission } from "../src/lib/access.ts";
+import { employeeCanViewPolicy, publishedVersion, ALLOWED_POLICY_UPLOAD } from "../src/domain/policies.ts";
 import { sessionEmployee } from "../src/lib/session.ts";
 import { acceptInvitation, rememberPlaceLabel, setAccountPassword, setEmployeePhoto } from "../src/store/mutations.ts";
 import { loadEnv } from "./env.ts";
@@ -19,6 +20,8 @@ import { testMicrosoftConnection } from "./microsoft-graph.ts";
 import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
 import { normalizeMicrosoft365 } from "../src/domain/hr-meeting.ts";
 import { recordMicrosoft365Health } from "../src/store/mutations.ts";
+import { importHrPoliciesFolder } from "./policy-import.ts";
+import { checksumBytes, contentTypeForName, makePolicyFileKey, readPolicyFile, writePolicyFile } from "./policies-store.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { deletePhoto, readPhoto, writePhoto } from "./photos.ts";
 import { renderPayslipPdf } from "./payslip-pdf.ts";
@@ -107,6 +110,11 @@ function serveApp(request: IncomingMessage, response: ServerResponse, pathname: 
   }
   createReadStream(file).pipe(response);
   return true;
+}
+
+function basenameSafe(name: string): string {
+  const base = name.replace(/\\/g, "/").split("/").pop() || "document.bin";
+  return base.replace(/[^\w.\- ()[\]]+/g, "_").slice(0, 160) || "document.bin";
 }
 
 function tokenFrom(request: IncomingMessage): string | null {
@@ -662,6 +670,165 @@ const server = createServer(async (request, response) => {
         ...SECURITY_HEADERS,
       });
       response.end(bytes);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/policies/import-folder") {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer || !hasPermission(state, viewer, "policies.manage")) {
+        send(response, 403, { ok: false, message: "Only HR can import policy documents." });
+        return;
+      }
+      const result = importHrPoliciesFolder(state, viewer.id);
+      writeWorkspace({ ...result.state, currentUserId: null });
+      const imported = result.report.filter((item) => item.ok && !item.skippedDuplicate).length;
+      const skipped = result.report.filter((item) => item.skippedDuplicate).length;
+      const failed = result.report.filter((item) => !item.ok).length;
+      send(response, 200, {
+        ok: failed === 0 || imported + skipped > 0,
+        message: `Import finished: ${imported} new, ${skipped} already present, ${failed} failed.`,
+        report: result.report,
+        state: presentWorkspace(result.state, accountId),
+      });
+      return;
+    }
+
+    const policyFileMatch = url.pathname.match(/^\/api\/policies\/([^/]+)\/file(?:\/([^/]+))?$/);
+    if (policyFileMatch && (request.method === "GET" || request.method === "POST")) {
+      const token = tokenFrom(request);
+      const { source, accountId } = viewerState(readSession(token));
+      if (!accountId) {
+        send(response, 401, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const state = { ...source, currentUserId: accountId };
+      const viewer = sessionEmployee(state);
+      if (!viewer) {
+        send(response, 403, { ok: false, message: "Sign in to continue." });
+        return;
+      }
+      const policyId = decodeURIComponent(policyFileMatch[1]);
+      const versionId = policyFileMatch[2] ? decodeURIComponent(policyFileMatch[2]) : null;
+      const policy = state.policies.find((item) => item.id === policyId);
+      if (!policy) {
+        send(response, 404, { ok: false, message: "Policy not found." });
+        return;
+      }
+      const manage = hasPermission(state, viewer, "policies.manage");
+      if (!employeeCanViewPolicy(policy, viewer, manage)) {
+        send(response, 403, { ok: false, message: "You cannot access this policy document." });
+        return;
+      }
+
+      if (request.method === "GET") {
+        const version = versionId
+          ? policy.versions.find((item) => item.id === versionId)
+          : publishedVersion(policy) ?? [...policy.versions].reverse().find((item) => item.fileKey) ?? policy.versions[policy.versions.length - 1];
+        if (!version?.fileKey) {
+          send(response, 404, { ok: false, message: "No source file is stored for this version." });
+          return;
+        }
+        if (!manage && !version.publishedAt) {
+          send(response, 403, { ok: false, message: "Draft documents are not available for download." });
+          return;
+        }
+        const bytes = readPolicyFile(version.fileKey);
+        if (!bytes) {
+          send(response, 404, { ok: false, message: "The stored document file was not found on the server." });
+          return;
+        }
+        const fileName = version.fileName || "policy-document";
+        response.writeHead(200, {
+          "content-type": version.contentType || contentTypeForName(fileName),
+          "content-disposition": `attachment; filename="${fileName.replace(/"/g, "")}"`,
+          "cache-control": "no-store",
+          "content-length": String(bytes.length),
+          ...SECURITY_HEADERS,
+        });
+        response.end(bytes);
+        return;
+      }
+
+      // POST upload — managers only, attach to draft version
+      if (!manage) {
+        send(response, 403, { ok: false, message: "Only HR can upload policy documents." });
+        return;
+      }
+      const fileNameHeader = String(request.headers["x-file-name"] || "document.bin");
+      const fileName = basenameSafe(fileNameHeader);
+      const type = String(request.headers["content-type"] || contentTypeForName(fileName));
+      let bytes: Buffer;
+      try {
+        bytes = await readBytes(request, ALLOWED_POLICY_UPLOAD.maxBytes);
+      } catch (error) {
+        send(response, 400, { ok: false, message: error instanceof Error ? error.message : "Upload failed." });
+        return;
+      }
+      const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
+      if (!ALLOWED_POLICY_UPLOAD.extensions.includes(ext)) {
+        send(response, 400, { ok: false, message: `Supported files: ${ALLOWED_POLICY_UPLOAD.extensions.join(", ")}.` });
+        return;
+      }
+      let draft = [...policy.versions].reverse().find((item) => !item.publishedAt);
+      let working = state;
+      if (!draft) {
+        const createDraft = actions.savePolicy(working, {
+          id: policy.id,
+          title: policy.title,
+          category: policy.category,
+          summary: publishedVersion(policy)?.summary || `${policy.title} — new draft version.`,
+          content: publishedVersion(policy)?.content || "Source document will be attached to this draft version.",
+          version: "Unspecified",
+          effectiveDate: "",
+          fileName: "",
+          audience: policy.audience,
+          newVersion: true,
+          requiresAcknowledgement: policy.requiresAcknowledgement,
+        });
+        if (!createDraft.result.ok) {
+          send(response, 400, { ok: false, message: createDraft.result.message });
+          return;
+        }
+        working = createDraft.state;
+        const updated = working.policies.find((item) => item.id === policy.id)!;
+        draft = [...updated.versions].reverse().find((item) => !item.publishedAt);
+      }
+      if (!draft) {
+        send(response, 400, { ok: false, message: "Could not create a draft version for upload." });
+        return;
+      }
+      const fileKey = makePolicyFileKey(policy.id, draft.id, fileName);
+      const writeError = writePolicyFile(fileKey, bytes);
+      if (writeError) {
+        send(response, 400, { ok: false, message: writeError });
+        return;
+      }
+      const outcome = actions.attachPolicyFileMeta(working, {
+        id: policy.id,
+        fileKey,
+        fileName,
+        fileSize: bytes.length,
+        contentType: type.startsWith("multipart") ? contentTypeForName(fileName) : type,
+        checksum: checksumBytes(bytes),
+      });
+      if (!outcome.result.ok) {
+        send(response, 400, { ok: false, message: outcome.result.message });
+        return;
+      }
+      writeWorkspace({ ...outcome.state, currentUserId: null });
+      send(response, 200, {
+        ok: true,
+        toast: outcome.toast,
+        state: presentWorkspace(outcome.state, accountId),
+        file: { fileKey, fileName, fileSize: bytes.length },
+      });
       return;
     }
 

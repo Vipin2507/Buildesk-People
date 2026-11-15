@@ -11,6 +11,13 @@ import {
   normalizeMicrosoft365,
   validateMeetingSlot,
 } from "../domain/hr-meeting";
+import {
+  draftVersion as policyDraftVersion,
+  nextPolicyVersion,
+  policyApplies,
+  publishChecklist,
+  validateAudience as validatePolicyAudience,
+} from "../domain/policies";
 import { consumeCompOff, defaultCompOffExpiry, projectLeaveAttendance, validateLeave } from "../domain/leave";
 import { snapshotPayslipRecord, validatePayslipData, buildPayslipDto, PAYSLIP_TEMPLATE_VERSION } from "../domain/payslip";
 import { createsCycle } from "../domain/org";
@@ -2201,8 +2208,19 @@ export interface PolicyDraft {
   content: string;
   version: string;
   effectiveDate: string;
+  reviewDate?: string;
   fileName: string;
+  fileKey?: string | null;
+  fileSize?: number | null;
+  contentType?: string | null;
+  checksum?: string | null;
   audience: PolicyAudience;
+  ownerId?: string | null;
+  requiresAcknowledgement?: boolean;
+  keywords?: string[];
+  status?: "draft" | "needs_review";
+  /** When true on a published policy, create a new unpublished version instead of editing published snapshot. */
+  newVersion?: boolean;
 }
 
 export function savePolicy(state: AppState, input: PolicyDraft): Outcome {
@@ -2211,36 +2229,114 @@ export function savePolicy(state: AppState, input: PolicyDraft): Outcome {
   if (input.title.trim().length < 3) return fail(state, "Enter a policy title.");
   if (input.category.trim().length < 2) return fail(state, "Enter a category.");
   if (input.summary.trim().length < 8) return fail(state, "Add a short summary.");
-  if (input.content.trim().length < 20) return fail(state, "Add the policy text employees will read.");
-  if (!/^\d+\.\d+$/.test(input.version.trim())) return fail(state, "Use a version like 1.0.");
-  if (!input.effectiveDate) return fail(state, "Choose an effective date.");
-  const audienceError = validateAudience(state, input.audience);
+  const hasFile = Boolean(input.fileKey || input.fileName.trim());
+  if (input.content.trim().length < 20 && !hasFile) {
+    return fail(state, "Add policy text or attach a source document.");
+  }
+  const versionText = input.version.trim() || "Unspecified";
+  if (versionText !== "Unspecified" && !/^\d+(\.\d+)?$/.test(versionText)) {
+    return fail(state, "Use a version like 1.0, or leave Unspecified until review.");
+  }
+  const audienceError = validatePolicyAudience(state, input.audience);
   if (audienceError) return fail(state, audienceError);
+
   const version: PolicyVersion = {
     id: uid("pver"),
-    version: input.version.trim(),
+    version: versionText,
     summary: input.summary.trim(),
     content: input.content.trim(),
-    fileName: input.fileName.trim() || `${input.title.trim().toLowerCase().replaceAll(/\s+/g, "-")}.txt`,
-    effectiveDate: input.effectiveDate,
+    fileName: input.fileName.trim() || (hasFile ? "document" : `${input.title.trim().toLowerCase().replaceAll(/\s+/g, "-")}.txt`),
+    fileKey: input.fileKey ?? null,
+    fileSize: input.fileSize ?? null,
+    contentType: input.contentType ?? null,
+    checksum: input.checksum ?? null,
+    effectiveDate: input.effectiveDate || "",
+    reviewDate: input.reviewDate || null,
     publishedAt: null,
+    createdAt: nowIso(),
+    createdBy: actor.id,
   };
   const existing = input.id ? state.policies.find((item) => item.id === input.id) : undefined;
   if (input.id && !existing) return fail(state, "That policy was not found.", true);
-  if (existing?.versions.some((item) => item.version === version.version && item.publishedAt)) {
+  if (existing?.versions.some((item) => item.version === version.version && item.publishedAt && version.version !== "Unspecified")) {
     return fail(state, "That version is already published. Choose a new version number.");
   }
+  const statusWanted = input.status === "needs_review" ? "needs_review" as const : "draft" as const;
   if (!existing) {
-    const policy: Policy = { id: uid("pol"), title: input.title.trim(), category: input.category.trim(), status: "draft", audience: input.audience, versions: [version], updatedAt: nowIso() };
-    return ok(pushAudit({ ...state, policies: [policy, ...state.policies] }, actor.id, "policies", `Created draft policy ${policy.title}.`), "Draft saved. Preview it before publishing.", policy.id);
+    const policy: Policy = {
+      id: uid("pol"),
+      title: input.title.trim(),
+      category: input.category.trim(),
+      status: statusWanted,
+      audience: input.audience,
+      versions: [version],
+      updatedAt: nowIso(),
+      createdAt: nowIso(),
+      createdBy: actor.id,
+      ownerId: input.ownerId ?? actor.id,
+      requiresAcknowledgement: Boolean(input.requiresAcknowledgement),
+      keywords: (input.keywords ?? []).map((item) => item.trim()).filter(Boolean),
+      importSourceKey: null,
+      sensitive: input.category.trim() === "Grievance",
+    };
+    return ok(pushAudit({ ...state, policies: [policy, ...state.policies] }, actor.id, "policies", `Created draft policy ${policy.title}.`), "Draft saved. Review before publishing.", policy.id);
   }
-  if (existing.status === "archived") return fail(state, "An archived policy stays as history. Create a new policy instead.");
-  const unpublished = existing.versions.find((item) => !item.publishedAt);
-  const versions = unpublished
-    ? existing.versions.map((item) => (item.id === unpublished.id ? { ...version, id: item.id } : item))
-    : [...existing.versions, version];
-  const policies = state.policies.map((item) => (item.id === existing.id ? { ...item, title: input.title.trim(), category: input.category.trim(), audience: input.audience, versions, updatedAt: nowIso() } : item));
-  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Updated draft content for ${existing.title}.`), "Draft version saved.", existing.id);
+  if (existing.status === "archived" || existing.status === "superseded") {
+    return fail(state, "Restore this policy before editing, or create a new policy.");
+  }
+  const forceNew = Boolean(input.newVersion) || (existing.status === "published" && !policyDraftVersion(existing));
+  const unpublished = policyDraftVersion(existing);
+  let versions: PolicyVersion[];
+  if (forceNew && !unpublished) {
+    versions = [...existing.versions, { ...version, version: input.version.trim() || nextPolicyVersion(existing) }];
+  } else if (unpublished) {
+    versions = existing.versions.map((item) =>
+      item.id === unpublished.id
+        ? {
+            ...version,
+            id: item.id,
+            fileKey: input.fileKey !== undefined ? input.fileKey : item.fileKey,
+            fileSize: input.fileSize !== undefined ? input.fileSize : item.fileSize,
+            contentType: input.contentType !== undefined ? input.contentType : item.contentType,
+            checksum: input.checksum !== undefined ? input.checksum : item.checksum,
+            fileName: input.fileName.trim() || item.fileName,
+            createdAt: item.createdAt ?? version.createdAt,
+            createdBy: item.createdBy ?? actor.id,
+          }
+        : item,
+    );
+  } else {
+    versions = [...existing.versions, version];
+  }
+  const nextStatus: Policy["status"] = existing.status === "published" ? "published" : statusWanted;
+  const policies: Policy[] = state.policies.map((item) =>
+    item.id === existing.id
+      ? {
+          ...item,
+          title: input.title.trim(),
+          category: input.category.trim(),
+          audience: input.audience,
+          ownerId: input.ownerId === undefined ? item.ownerId ?? null : input.ownerId,
+          requiresAcknowledgement: input.requiresAcknowledgement === undefined ? Boolean(item.requiresAcknowledgement) : Boolean(input.requiresAcknowledgement),
+          keywords: input.keywords ?? item.keywords ?? [],
+          sensitive: input.category.trim() === "Grievance" || Boolean(item.sensitive),
+          status: nextStatus,
+          versions,
+          updatedAt: nowIso(),
+        }
+      : item,
+  );
+  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Updated policy draft ${existing.title}.`), "Draft version saved.", existing.id);
+}
+
+export function submitPolicyForReview(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "policies.manage");
+  if (!isEmployee(actor)) return actor;
+  const policy = state.policies.find((item) => item.id === id);
+  if (!policy) return fail(state, "That policy was not found.", true);
+  if (policy.status !== "draft" && policy.status !== "needs_review") return fail(state, "Only drafts can be marked Needs review.");
+  const policies = state.policies.map((item) => (item.id === id ? { ...item, status: "needs_review" as const, updatedAt: nowIso() } : item));
+  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Marked ${policy.title} as needs review.`), "Marked Needs review.");
 }
 
 export function publishPolicy(state: AppState, id: string): Outcome {
@@ -2248,19 +2344,32 @@ export function publishPolicy(state: AppState, id: string): Outcome {
   if (!isEmployee(actor)) return actor;
   const policy = state.policies.find((item) => item.id === id);
   if (!policy) return fail(state, "That policy was not found.", true);
-  if (policy.status === "archived") return fail(state, "Archived policies are not published again from this screen.");
-  const pending = [...policy.versions].reverse().find((item) => !item.publishedAt);
+  if (policy.status === "archived" || policy.status === "superseded") return fail(state, "Restore this policy before publishing.");
+  const pending = policyDraftVersion(policy);
   if (!pending && policy.status === "published") return fail(state, "This policy is already published. Save a new version before publishing again.");
   const target = pending ?? policy.versions[policy.versions.length - 1];
-  const versions = policy.versions.map((item) => (item.id === target.id ? { ...item, publishedAt: nowIso() } : item));
+  const checks = publishChecklist({ ...policy, versions: policy.versions.map((item) => (item.id === target.id ? target : item)) });
+  const failed = checks.find((item) => !item.ok);
+  if (failed) return fail(state, `Cannot publish yet: ${failed.label}.`);
+  const versions = policy.versions.map((item) => {
+    if (item.id === target.id) return { ...item, publishedAt: nowIso() };
+    if (item.publishedAt && policy.status === "published") {
+      // Prior published versions remain in history; policy stays one current published record.
+      return item;
+    }
+    return item;
+  });
   const policies = state.policies.map((item) => (item.id === id ? { ...item, status: "published" as const, versions, updatedAt: nowIso() } : item));
-  const notes = state.accounts.filter((item) => item.status === "active").map((item) => ({
-    userId: item.employeeId || item.id,
-    title: "Policy published",
-    body: `${policy.title} version ${target.version} is ready to read.`,
-    href: `/policies/${policy.id}`,
-    kind: "policy" as const,
-  }));
+  const notes = state.employees
+    .filter((person) => person.status === "active" || person.status === "on_notice")
+    .filter((person) => policyApplies(policy, person))
+    .map((person) => ({
+      userId: person.id,
+      title: "Policy published",
+      body: `${policy.title} version ${target.version} is ready to read.`,
+      href: `/policies/${policy.id}`,
+      kind: "policy" as const,
+    }));
   return ok(pushNotes(pushAudit({ ...state, policies }, actor.id, "policies", `Published ${policy.title} version ${target.version}.`), notes), "Policy published.", policy.id);
 }
 
@@ -2274,28 +2383,70 @@ export function archivePolicy(state: AppState, id: string): Outcome {
   return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Archived ${policy.title}.`), "Policy archived. Employees will see it as no longer current.");
 }
 
+export function restorePolicy(state: AppState, id: string): Outcome {
+  const actor = requireUser(state, "policies.manage");
+  if (!isEmployee(actor)) return actor;
+  const policy = state.policies.find((item) => item.id === id);
+  if (!policy) return fail(state, "That policy was not found.", true);
+  if (policy.status !== "archived" && policy.status !== "superseded") return fail(state, "Only archived or superseded policies can be restored to draft.");
+  const policies = state.policies.map((item) => (item.id === id ? { ...item, status: "draft" as const, updatedAt: nowIso() } : item));
+  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Restored ${policy.title} to draft.`), "Policy restored as draft. Review before publishing.");
+}
+
+export function setPolicyAcknowledgementRequired(state: AppState, id: string, required: boolean): Outcome {
+  const actor = requireUser(state, "policies.manage");
+  if (!isEmployee(actor)) return actor;
+  const policy = state.policies.find((item) => item.id === id);
+  if (!policy) return fail(state, "That policy was not found.", true);
+  const policies = state.policies.map((item) => (item.id === id ? { ...item, requiresAcknowledgement: Boolean(required), updatedAt: nowIso() } : item));
+  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `${required ? "Enabled" : "Disabled"} acknowledgement for ${policy.title}.`), required ? "Acknowledgement required for this policy." : "Acknowledgement is optional for this policy.");
+}
+
+export function attachPolicyFileMeta(
+  state: AppState,
+  id: string,
+  meta: { fileKey: string; fileName: string; fileSize: number; contentType: string; checksum: string },
+): Outcome {
+  const actor = requireUser(state, "policies.manage");
+  if (!isEmployee(actor)) return actor;
+  const policy = state.policies.find((item) => item.id === id);
+  if (!policy) return fail(state, "That policy was not found.", true);
+  const pending = policyDraftVersion(policy) ?? policy.versions[policy.versions.length - 1];
+  if (!pending || pending.publishedAt) {
+    return fail(state, "Save a draft version before attaching a file.");
+  }
+  const versions = policy.versions.map((item) =>
+    item.id === pending.id
+      ? {
+          ...item,
+          fileKey: meta.fileKey,
+          fileName: meta.fileName,
+          fileSize: meta.fileSize,
+          contentType: meta.contentType,
+          checksum: meta.checksum,
+        }
+      : item,
+  );
+  const policies = state.policies.map((item) => (item.id === id ? { ...item, versions, updatedAt: nowIso() } : item));
+  return ok(pushAudit({ ...state, policies }, actor.id, "policies", `Attached source file to ${policy.title}.`), "Source document stored.", id);
+}
+
 export function acknowledgePolicy(state: AppState, id: string): Outcome {
   const actor = requireUser(state, "policies.view");
   if (!isEmployee(actor)) return actor;
   const unlinked = requireOwnRecord(state, actor);
   if (unlinked) return unlinked;
-  if (!isEmployee(actor)) return actor;
   const policy = state.policies.find((item) => item.id === id);
   if (!policy || policy.status !== "published") return fail(state, "Only a published policy can be acknowledged.", true);
+  if (!policyApplies(policy, actor)) return fail(state, "This policy does not apply to you.", true);
+  if (!policy.requiresAcknowledgement) return fail(state, "Acknowledgement is not required for this policy.");
   const version = [...policy.versions].reverse().find((item) => item.publishedAt);
   if (!version) return fail(state, "This policy has no published version.", true);
   if (state.acknowledgements.some((item) => item.policyId === id && item.employeeId === actor.id && item.version === version.version)) {
     return fail(state, "You already acknowledged this version.");
   }
-  const record = { id: uid("ack"), policyId: id, version: version.version, employeeId: actor.id, at: nowIso() };
+  const record = { id: uid("ack"), policyId: id, version: version.version, employeeId: actor.id, at: nowIso(), source: "explicit" as const };
   return ok(pushAudit({ ...state, acknowledgements: [record, ...state.acknowledgements] }, actor.id, "policies", `${fullName(actor)} acknowledged ${policy.title} version ${version.version}.`), "Acknowledgement recorded for this version.");
-}
-
-function validateAudience(state: AppState, audience: PolicyAudience): string | null {
-  if (audience.kind === "all") return null;
-  if (audience.kind === "location" && !state.locations.some((item) => item.id === audience.locationId)) return "Choose a location for this policy.";
-  if (audience.kind === "department" && !state.departments.some((item) => item.id === audience.departmentId)) return "Choose a department for this policy.";
-  return null;
 }
 
 export function currentPeriodLabel(state: AppState): string {

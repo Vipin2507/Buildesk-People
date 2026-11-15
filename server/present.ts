@@ -106,7 +106,7 @@ export function presentWorkspace(source: AppState, accountId: string): AppState 
     documents: state.documents.filter((item) => canSeeDocument(state, viewer, item)),
     policies: hasPermission(state, viewer, "policies.manage")
       ? state.policies
-      : state.policies.filter((item) => item.status !== "draft" && policyApplies(item, viewer)),
+      : state.policies.filter((item) => item.status === "published" && policyApplies(item, viewer)),
     acknowledgements: hasPermission(state, viewer, "policies.manage")
       ? state.acknowledgements
       : state.acknowledgements.filter((item) => item.employeeId === self),

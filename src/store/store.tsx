@@ -64,9 +64,15 @@ interface StoreValue {
     saveAsset: (input: Parameters<typeof m.saveAsset>[1]) => Promise<Result>;
     saveDocument: (input: Parameters<typeof m.saveDocument>[1]) => Promise<Result>;
     savePolicy: (input: Parameters<typeof m.savePolicy>[1]) => Promise<Result>;
+    submitPolicyForReview: (id: string) => Promise<Result>;
     publishPolicy: (id: string) => Promise<Result>;
     archivePolicy: (id: string) => Promise<Result>;
+    restorePolicy: (id: string) => Promise<Result>;
+    setPolicyAcknowledgementRequired: (id: string, required: boolean) => Promise<Result>;
     acknowledgePolicy: (id: string) => Promise<Result>;
+    importHrPoliciesFolder: () => Promise<{ ok: boolean; message: string; report?: Array<{ fileName: string; ok: boolean; message: string; skippedDuplicate?: boolean }> }>;
+    uploadPolicyFile: (policyId: string, file: File) => Promise<Result>;
+    downloadPolicyFile: (policyId: string, versionId?: string) => Promise<void>;
     assignAsset: (id: string, employeeId: string) => Promise<Result>;
     acknowledgeAsset: (id: string) => Promise<Result>;
     transitionAsset: (id: string, action: "return" | "repair" | "retire" | "transfer", comment: string, transferTo?: string) => Promise<Result>;
@@ -283,9 +289,65 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveAsset: (input) => run("saveAsset", input),
     saveDocument: (input) => run("saveDocument", input),
     savePolicy: (input) => run("savePolicy", input),
+    submitPolicyForReview: (id) => run("submitPolicyForReview", { id }),
     publishPolicy: (id) => run("publishPolicy", { id }),
     archivePolicy: (id) => run("archivePolicy", { id }),
+    restorePolicy: (id) => run("restorePolicy", { id }),
+    setPolicyAcknowledgementRequired: (id, required) => run("setPolicyAcknowledgementRequired", { id, required }),
     acknowledgePolicy: (id) => run("acknowledgePolicy", { id }),
+    importHrPoliciesFolder: async () => {
+      const { payload } = await request("/api/policies/import-folder", {});
+      const data = payload as {
+        ok?: boolean;
+        message?: string;
+        state?: AppState;
+        report?: Array<{ fileName: string; ok: boolean; message: string; skippedDuplicate?: boolean }>;
+      };
+      if (data.state) setState(data.state);
+      pushToast(data.message || (data.ok ? "Import finished." : "Import failed."), data.ok ? "success" : "error");
+      return { ok: Boolean(data.ok), message: data.message || "", report: data.report };
+    },
+    uploadPolicyFile: async (policyId, file) => {
+      const response = await fetch(`/api/policies/${encodeURIComponent(policyId)}/file`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": file.type || "application/octet-stream",
+          "x-file-name": file.name,
+        },
+        body: file,
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string; state?: AppState | null; toast?: string };
+      if (payload.state) setState(payload.state);
+      if (response.ok && payload.ok) {
+        pushToast(payload.toast ?? "Document uploaded.", "success");
+        return { ok: true };
+      }
+      const message = payload.message ?? "The document could not be uploaded.";
+      pushToast(message, "error");
+      return { ok: false, message };
+    },
+    downloadPolicyFile: async (policyId, versionId) => {
+      const path = versionId
+        ? `/api/policies/${encodeURIComponent(policyId)}/file/${encodeURIComponent(versionId)}`
+        : `/api/policies/${encodeURIComponent(policyId)}/file`;
+      const response = await fetch(path, { credentials: "include" });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { message?: string };
+        pushToast(payload.message ?? "Download failed.", "error");
+        return;
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const name = match?.[1] || "policy-document";
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = name;
+      anchor.click();
+      URL.revokeObjectURL(href);
+    },
     assignAsset: (id, employeeId) => run("assignAsset", { id, employeeId }),
     acknowledgeAsset: (id) => run("acknowledgeAsset", { id }),
     transitionAsset: (id, action, comment, transferTo) => run("transitionAsset", { id, action, comment, transferTo }),

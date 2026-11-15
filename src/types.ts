@@ -511,12 +511,13 @@ export interface EmployeeDocument {
   uploadedBy: string;
 }
 
-export type PolicyStatus = "draft" | "published" | "archived";
+export type PolicyStatus = "draft" | "needs_review" | "published" | "archived" | "superseded";
 
 export type PolicyAudience =
   | { kind: "all" }
   | { kind: "location"; locationId: string }
-  | { kind: "department"; departmentId: string };
+  | { kind: "department"; departmentId: string }
+  | { kind: "employment_type"; employmentType: EmploymentType };
 
 export interface PolicyVersion {
   id: string;
@@ -524,8 +525,17 @@ export interface PolicyVersion {
   summary: string;
   content: string;
   fileName: string;
+  /** Private storage key under data/policies — never a public URL. */
+  fileKey?: string | null;
+  fileSize?: number | null;
+  contentType?: string | null;
+  /** SHA-256 of attached bytes when a file is stored. */
+  checksum?: string | null;
   effectiveDate: string;
+  reviewDate?: string | null;
   publishedAt: string | null;
+  createdAt?: string;
+  createdBy?: string | null;
 }
 
 export interface Policy {
@@ -536,6 +546,16 @@ export interface Policy {
   audience: PolicyAudience;
   versions: PolicyVersion[];
   updatedAt: string;
+  createdAt?: string;
+  createdBy?: string | null;
+  ownerId?: string | null;
+  /** When true, employees must explicitly acknowledge the published version. */
+  requiresAcknowledgement?: boolean;
+  keywords?: string[];
+  /** Stable key for idempotent folder/ZIP import (filename or content hash). */
+  importSourceKey?: string | null;
+  /** Grievance and similar policies restricted to configured audience only. */
+  sensitive?: boolean;
 }
 
 export interface PolicyAcknowledgement {
@@ -544,6 +564,8 @@ export interface PolicyAcknowledgement {
   version: string;
   employeeId: string;
   at: string;
+  /** Always explicit; opening or downloading alone never creates this. */
+  source?: "explicit";
 }
 
 export interface PayrollLine {
