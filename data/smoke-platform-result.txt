@@ -1,0 +1,7 @@
+owner=owner@buildesk.local
+provision={"ok":true,"id":"ws_b592va2dy"}
+dupBlocked=true msg=That admin email is already registered to another workspace.
+directory={"email":"admin@smoke-acme.test","workspaceId":"ws_b592va2dy","accountId":"usr_2k3n7b2ej","updatedAt":"2026-11-21T09:03:46.038Z"}
+adminStatus=invited needsSetup=true
+clientSession=5cafb5161081
+platformSession=d02bc091c278

@@ -1697,3 +1697,183 @@ html.theme-switching .signin-card {
 .hr-meetings-module .timeline.compact { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
 .hr-meetings-module .timeline.compact li { padding: 8px 0; border-top: 1px solid var(--border); }
 .hr-meetings-module .timeline.compact li:first-child { border-top: 0; }
+
+/* —— Platform Admin —— */
+.platform-shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, color-mix(in srgb, var(--primary-100) 70%, transparent), transparent 60%),
+    var(--color-page);
+}
+.platform-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 21px;
+  padding: 21px 13px;
+  background: linear-gradient(180deg, var(--primary-800), var(--primary-900));
+  color: #fff;
+}
+.platform-brand {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 8px 13px;
+}
+.platform-brand strong { display: block; font-size: 16px; }
+.platform-brand span { display: block; font-size: 13px; opacity: 0.8; }
+.platform-nav nav { display: grid; gap: 8px; flex: 1; }
+.platform-nav a {
+  color: #fff;
+  text-decoration: none;
+  padding: 13px;
+  border-radius: 10px;
+  opacity: 0.88;
+}
+.platform-nav a:hover,
+.platform-nav a.is-active { background: color-mix(in srgb, #fff 14%, transparent); opacity: 1; }
+.platform-nav-foot { padding: 13px; border-top: 1px solid color-mix(in srgb, #fff 18%, transparent); }
+.platform-nav-foot .muted { opacity: 0.75; font-size: 13px; }
+.platform-nav-foot .btn-ghost { color: #fff; }
+.platform-main { padding: 34px; }
+.platform-page { max-width: 1120px; display: grid; gap: 21px; }
+.platform-page-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 21px;
+  align-items: flex-start;
+}
+.platform-page h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 42px);
+  letter-spacing: -0.03em;
+}
+.platform-eyebrow { margin: 0 0 8px; color: var(--color-text-muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+.platform-actions { display: flex; flex-wrap: wrap; gap: 13px; }
+.platform-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.618fr) minmax(0, 1fr);
+  gap: 21px;
+}
+.platform-stack { display: grid; gap: 21px; }
+.platform-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 21px;
+  box-shadow: var(--color-shadow);
+}
+.platform-panel h2 { margin: 0 0 13px; font-size: 26px; }
+.platform-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 13px;
+  margin-bottom: 21px;
+}
+.platform-metric {
+  display: grid;
+  gap: 8px;
+  padding: 13px;
+  border-radius: 12px;
+  background: var(--color-hover);
+}
+.platform-metric strong { font-size: 26px; }
+.platform-status-list,
+.platform-audit-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 13px; }
+.platform-status-list li,
+.platform-audit-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 13px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+.platform-audit-list time { color: var(--color-text-muted); white-space: nowrap; }
+.platform-filters {
+  display: grid;
+  grid-template-columns: 1fr 180px auto;
+  gap: 13px;
+}
+.platform-table-wrap { overflow: auto; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); }
+.platform-table { width: 100%; border-collapse: collapse; }
+.platform-table th,
+.platform-table td { padding: 13px; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.platform-table th { font-size: 13px; color: var(--color-text-muted); background: var(--color-hover); }
+.platform-pill {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--neutral-100);
+  color: var(--neutral-800);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+.platform-pill.status-active,
+.platform-pill.status-trial { background: var(--success-50); color: var(--success-800); }
+.platform-pill.status-suspended,
+.platform-pill.status-expired { background: var(--warning-50); color: var(--warning-800); }
+.platform-pill.status-archived { background: var(--neutral-200); color: var(--neutral-700); }
+.platform-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.platform-tabs button {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 999px;
+  padding: 8px 13px;
+  cursor: pointer;
+}
+.platform-tabs button.is-active {
+  background: var(--primary-600);
+  border-color: var(--primary-600);
+  color: #fff;
+}
+.platform-form { display: grid; gap: 13px; max-width: 560px; }
+.platform-modules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border: 0; padding: 0; }
+.platform-modules legend { margin-bottom: 8px; font-weight: 600; }
+.platform-steps {
+  display: flex;
+  gap: 13px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+.platform-steps li {
+  padding: 8px 13px;
+  border-radius: 999px;
+  background: var(--neutral-100);
+  color: var(--color-text-muted);
+}
+.platform-steps li.is-active { background: var(--primary-600); color: #fff; }
+.platform-steps li.is-done { background: var(--success-50); color: var(--success-800); }
+.platform-signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--primary-50) 80%, transparent), transparent 55%),
+    var(--color-page);
+}
+.platform-signin-card {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 13px;
+  padding: 34px;
+  border-radius: 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--color-shadow);
+}
+.platform-signin-card h1 { margin: 0; font-size: clamp(32px, 5vw, 42px); }
+.platform-linkish { justify-self: start; }
+.platform-loading { min-height: 40vh; display: grid; place-items: center; color: var(--color-text-muted); }
+.error-text { color: var(--color-error-text); }
+@media (max-width: 900px) {
+  .platform-shell { grid-template-columns: 1fr; }
+  .platform-nav { position: sticky; top: 0; z-index: 5; }
+  .platform-split,
+  .platform-filters { grid-template-columns: 1fr; }
+  .platform-main { padding: 21px 13px 34px; }
+  .platform-page-head { flex-direction: column; }
+}

@@ -1,8 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getTenantContext } from "./tenant/context.ts";
 
-const directory = join(process.cwd(), "data", "policies");
+function policiesDirectory(): string {
+  const ctx = getTenantContext();
+  if (!ctx) throw new Error("Tenant context is required for policy file storage.");
+  return join(ctx.dataDir, "policies");
+}
 
 function safeKey(key: string): string | null {
   return /^[a-zA-Z0-9._-]+$/.test(key) && key.length <= 200 ? key : null;
@@ -11,13 +16,13 @@ function safeKey(key: string): string | null {
 export function policyFilePath(fileKey: string): string | null {
   const key = safeKey(fileKey);
   if (!key) return null;
-  return join(directory, key);
+  return join(policiesDirectory(), key);
 }
 
 export function writePolicyFile(fileKey: string, bytes: Buffer): string | null {
   const file = policyFilePath(fileKey);
   if (!file) return "Invalid policy file key.";
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(policiesDirectory(), { recursive: true });
   writeFileSync(file, bytes);
   return null;
 }

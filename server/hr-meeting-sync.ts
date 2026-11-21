@@ -4,6 +4,7 @@ import { nowIso, uid } from "../src/domain/dates.ts";
 import { fullName } from "../src/lib/format.ts";
 import type { AppNotification, AppState, Ticket } from "../src/types.ts";
 import { writeWorkspace } from "./db.ts";
+import { getTenantContext, runWithTenantAsync } from "./tenant/context.ts";
 
 let running = false;
 
@@ -265,17 +266,22 @@ export async function processHrMeetingSync(state: AppState, ticketId: string): P
 }
 
 export function queueHrMeetingSync(ticketId: string): void {
+  const tenant = getTenantContext();
   void (async () => {
     if (running) {
       setTimeout(() => queueHrMeetingSync(ticketId), 1500);
       return;
     }
     running = true;
-    try {
+    const run = async () => {
       const { readWorkspace } = await import("./db.ts");
       const latest = readWorkspace();
       const next = await processHrMeetingSync(latest, ticketId);
       writeWorkspace({ ...next, currentUserId: null });
+    };
+    try {
+      if (tenant) await runWithTenantAsync(tenant, run);
+      else await run();
     } catch {
       // Sync errors are persisted on the ticket when possible.
     } finally {

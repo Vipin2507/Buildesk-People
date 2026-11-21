@@ -23,14 +23,16 @@ import { AssetDetail } from "./pages/Assets";
 import { HrMeetings } from "./pages/HrMeetings";
 import { TicketDetail } from "./pages/TicketDetail";
 import { Tickets } from "./pages/Tickets";
+import { PlatformApp } from "./platform/App";
 import { StoreProvider, useApp } from "./store/store";
 
 export function App() {
   return (
-    <StoreProvider>
-      <BrowserRouter>
-        <Boundary>
-          <Routes>
+    <BrowserRouter>
+      <Boundary>
+        <Routes>
+          <Route path="/admin/*" element={<PlatformApp />} />
+          <Route element={<ClientApp />}>
             <Route path="/signin" element={<SignIn />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route element={<RequireAuth />}>
@@ -61,9 +63,17 @@ export function App() {
                 <Route path="*" element={<EmptyState title="Page not found" body="That address is not part of Buildesk People." />} />
               </Route>
             </Route>
-          </Routes>
-        </Boundary>
-      </BrowserRouter>
+          </Route>
+        </Routes>
+      </Boundary>
+    </BrowserRouter>
+  );
+}
+
+function ClientApp() {
+  return (
+    <StoreProvider>
+      <Outlet />
     </StoreProvider>
   );
 }

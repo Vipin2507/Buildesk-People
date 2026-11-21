@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getTenantContext } from "./tenant/context.ts";
 
-const directory = join(process.cwd(), "data", "payslips");
+function payslipsDirectory(): string {
+  const ctx = getTenantContext();
+  if (!ctx) throw new Error("Tenant context is required for payslip storage.");
+  return join(ctx.dataDir, "payslips");
+}
 
 function safeKey(key: string): string | null {
   return /^[a-zA-Z0-9._-]+$/.test(key) && key.length <= 180 ? key : null;
@@ -10,13 +15,13 @@ function safeKey(key: string): string | null {
 export function payslipPath(documentKey: string): string | null {
   const key = safeKey(documentKey);
   if (!key) return null;
-  return join(directory, key);
+  return join(payslipsDirectory(), key);
 }
 
 export function writePayslipPdf(documentKey: string, bytes: Buffer): string | null {
   const file = payslipPath(documentKey);
   if (!file) return "Invalid payslip document key.";
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(payslipsDirectory(), { recursive: true });
   writeFileSync(file, bytes);
   return null;
 }

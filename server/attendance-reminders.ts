@@ -6,6 +6,11 @@ import type { AppState, Employee } from "../src/types.ts";
 import type { AutomationLog, AutomationTrigger } from "../src/types/automation.ts";
 import { dispatchAutomation } from "./automation.ts";
 import { readWorkspace, writeWorkspace } from "./db.ts";
+import { legacySingleTenantAllowed, listWorkspaces, workspaceAccessBlocked } from "./platform/db.ts";
+import { runWithTenantAsync } from "./tenant/context.ts";
+import { contextForWorkspaceId } from "./tenant/resolve.ts";
+import { existsSync } from "node:fs";
+import { legacyDbPath } from "./tenant/store.ts";
 
 const DEFAULT_OFFSET = 15;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -225,28 +230,51 @@ export async function runAttendanceReminder(
   return { ok: true, message: `${kind === "login" ? "Login" : "Logout"} reminder sent to ${result.attempted} people (${result.skipped} skipped).` };
 }
 
+async function tickOneTenant(): Promise<void> {
+  const state = readWorkspace();
+  const config = normalizeAutomationConfig(state.automation);
+  if (!config.settings.automationsEnabled) return;
+
+  const { date, time } = officeNow();
+  const workStart = state.settings.workStart;
+  const workEnd = state.settings.workEnd?.trim() || "";
+  const loginOffset = reminderOffset(state, "attendance-login-reminder");
+  const logoutOffset = reminderOffset(state, "attendance-logout-reminder");
+  const loginAt = workStart && /^\d{2}:\d{2}$/.test(workStart) ? subtractMinutesHhmm(workStart, loginOffset) : null;
+  const logoutAt = workEnd && /^\d{2}:\d{2}$/.test(workEnd) ? subtractMinutesHhmm(workEnd, logoutOffset) : null;
+  const sent = config.settings.attendanceReminderSent ?? {};
+
+  if (loginAt && workStart && inReminderWindow(time, loginAt, workStart) && sent.loginOn !== date) {
+    await runAttendanceReminder("login");
+  }
+  if (logoutAt && workEnd && inReminderWindow(time, logoutAt, workEnd) && sent.logoutOn !== date) {
+    await runAttendanceReminder("logout");
+  }
+}
+
+function schedulerWorkspaceIds(): string[] {
+  const ids = listWorkspaces()
+    .filter((item) => item.provisioningStatus === "ready" && !workspaceAccessBlocked(item))
+    .map((item) => item.id);
+  if (legacySingleTenantAllowed() && existsSync(legacyDbPath()) && !ids.includes("legacy")) {
+    ids.push("legacy");
+  }
+  if (ids.length === 0 && legacySingleTenantAllowed() && existsSync(legacyDbPath())) return ["legacy"];
+  return ids;
+}
+
 export async function tickAttendanceReminders(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    const state = readWorkspace();
-    const config = normalizeAutomationConfig(state.automation);
-    if (!config.settings.automationsEnabled) return;
-
-    const { date, time } = officeNow();
-    const workStart = state.settings.workStart;
-    const workEnd = state.settings.workEnd?.trim() || "";
-    const loginOffset = reminderOffset(state, "attendance-login-reminder");
-    const logoutOffset = reminderOffset(state, "attendance-logout-reminder");
-    const loginAt = workStart && /^\d{2}:\d{2}$/.test(workStart) ? subtractMinutesHhmm(workStart, loginOffset) : null;
-    const logoutAt = workEnd && /^\d{2}:\d{2}$/.test(workEnd) ? subtractMinutesHhmm(workEnd, logoutOffset) : null;
-    const sent = config.settings.attendanceReminderSent ?? {};
-
-    if (loginAt && workStart && inReminderWindow(time, loginAt, workStart) && sent.loginOn !== date) {
-      await runAttendanceReminder("login");
-    }
-    if (logoutAt && workEnd && inReminderWindow(time, logoutAt, workEnd) && sent.logoutOn !== date) {
-      await runAttendanceReminder("logout");
+    for (const workspaceId of schedulerWorkspaceIds()) {
+      const ctx = contextForWorkspaceId(workspaceId, workspaceId === "legacy");
+      if (!ctx) continue;
+      try {
+        await runWithTenantAsync(ctx, () => tickOneTenant());
+      } catch {
+        // Per-tenant failures must not stop other workspaces.
+      }
     }
   } catch {
     // Reminder failures must never crash the API process.

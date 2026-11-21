@@ -17,7 +17,7 @@ import { afterActionAutomation } from "./automation-hooks.ts";
 import { afterActionHrMeetingSync } from "./hr-meeting-hooks.ts";
 import { processHrMeetingSync } from "./hr-meeting-sync.ts";
 import { testMicrosoftConnection } from "./microsoft-graph.ts";
-import { createSession, deleteSession, readSession, readWorkspace, writeWorkspace } from "./db.ts";
+import { createSession, deleteSession, readSessionFull, readWorkspace, writeWorkspace } from "./db.ts";
 import { normalizeMicrosoft365 } from "../src/domain/hr-meeting.ts";
 import { recordMicrosoft365Health } from "../src/store/mutations.ts";
 import { backfillPolicyExtractionsContent, importHrPoliciesFolder } from "./policy-import.ts";
@@ -30,6 +30,19 @@ import { makeDocumentKey, readPayslipPdf, writePayslipPdf } from "./payslips-sto
 import { presentWorkspace } from "./present.ts";
 import { buildPayslipDto } from "../src/domain/payslip.ts";
 import { generatePayslip as generatePayslipMutation, publishPayslip as publishPayslipMutation, recordPayslipDownload } from "../src/store/mutations.ts";
+import { ensurePlatformBootstrap, handlePlatformRequest } from "./platform/routes.ts";
+import {
+  getPlan,
+  getWorkspace,
+  legacySingleTenantAllowed,
+  lookupEmail,
+  multiTenantEnabled,
+  workspaceAccessBlocked,
+  effectiveEmployeeLimit,
+} from "./platform/db.ts";
+import { bindTenant, runWithTenantAsync, type TenantContext } from "./tenant/context.ts";
+import { assertWorkspaceApiAccess, contextForWorkspaceId } from "./tenant/resolve.ts";
+import { legacyDbPath } from "./tenant/store.ts";
 import {
   appendAutomationLog,
   buildN8nWebhookUrl,
@@ -48,6 +61,8 @@ const PORT = Number(process.env.PORT ?? process.env.BUILDESK_API_PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const COOKIE = "buildesk_session";
 const DIST = resolve(process.cwd(), "dist");
+
+ensurePlatformBootstrap();
 
 /** Geolocation is allowed only for this site's own origin. Unrelated origins stay blocked. */
 const SECURITY_HEADERS = { "permissions-policy": "geolocation=(self)" };
@@ -179,6 +194,53 @@ function viewerState(accountId: string | null): { source: AppState; accountId: s
   return { source, accountId: account ? accountId : null };
 }
 
+/** Bind tenant ALS from the client session cookie. Returns null when unsigned. */
+function bindClientSession(request: IncomingMessage): { workspaceId: string; accountId: string } | null {
+  const session = readSessionFull(tokenFrom(request));
+  if (!session) return null;
+  const ctx = contextForWorkspaceId(session.workspaceId, session.workspaceId === "legacy");
+  if (!ctx) return null;
+  bindTenant(ctx);
+  return session;
+}
+
+function workspaceBlockedResponse(workspaceId: string): { status: number; message: string } | null {
+  const access = assertWorkspaceApiAccess(workspaceId);
+  if (access.ok) return null;
+  return { status: access.status, message: access.message };
+}
+
+function resolveLoginTenant(email: string): { workspaceId: string; ctx: TenantContext; blocked?: string } | { error: string } {
+  const entry = lookupEmail(email);
+  if (entry) {
+    const workspace = getWorkspace(entry.workspaceId);
+    if (!workspace) return { error: "The email or password is incorrect." };
+    const blocked = workspaceAccessBlocked(workspace);
+    const ctx = contextForWorkspaceId(entry.workspaceId);
+    if (!ctx) return { error: "This workspace is temporarily unavailable." };
+    if (blocked) return { workspaceId: entry.workspaceId, ctx, blocked };
+    return { workspaceId: entry.workspaceId, ctx };
+  }
+  if (legacySingleTenantAllowed() && existsSync(legacyDbPath())) {
+    const ctx = contextForWorkspaceId("legacy", true);
+    if (!ctx) return { error: "Workspace unavailable." };
+    return { workspaceId: "legacy", ctx };
+  }
+  return { error: "The email or password is incorrect." };
+}
+
+function enforceEmployeeLimit(state: AppState, workspaceId: string): string | null {
+  if (workspaceId === "legacy" || !multiTenantEnabled()) return null;
+  const workspace = getWorkspace(workspaceId);
+  if (!workspace) return null;
+  const plan = getPlan(workspace.planId);
+  const limit = effectiveEmployeeLimit(workspace, plan);
+  if (!limit) return null;
+  const active = state.employees.filter((item) => item.status !== "inactive").length;
+  if (active >= limit) return `This workspace has reached its employee limit (${limit}).`;
+  return null;
+}
+
 function sessionStillValid(state: AppState, accountId: string): boolean {
   const account = state.accounts.find((item) => item.id === accountId);
   return Boolean(account && account.status === "active");
@@ -188,17 +250,40 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   try {
     if (request.method === "GET" && url.pathname === "/api/health") {
-      send(response, 200, { ok: true });
+      send(response, 200, {
+        ok: true,
+        multiTenant: multiTenantEnabled(),
+        legacy: legacySingleTenantAllowed(),
+      });
       return;
     }
 
+    if (url.pathname.startsWith("/api/platform")) {
+      const handled = await handlePlatformRequest(request, response, url, send);
+      if (handled) return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/bootstrap") {
-      const { source, accountId } = viewerState(readSession(tokenFrom(request)));
+      const session = bindClientSession(request);
+      if (!session) {
+        send(response, 200, { authenticated: false });
+        return;
+      }
+      const blocked = workspaceBlockedResponse(session.workspaceId);
+      if (blocked) {
+        send(response, 200, { authenticated: false, workspaceBlocked: blocked.message });
+        return;
+      }
+      const { source, accountId } = viewerState(session.accountId);
       if (!accountId) {
         send(response, 200, { authenticated: false });
         return;
       }
-      send(response, 200, { authenticated: true, state: presentWorkspace(source, accountId) });
+      send(response, 200, {
+        authenticated: true,
+        workspaceId: session.workspaceId,
+        state: presentWorkspace(source, accountId),
+      });
       return;
     }
 
@@ -216,36 +301,47 @@ const server = createServer(async (request, response) => {
         send(response, 400, { ok: false, message: "Enter a valid work email." });
         return;
       }
-      const source = readWorkspace();
-      const account = findAccountByEmail(source.accounts, email);
-      if (!account) {
-        const listed = source.employees.some((item) => item.email.toLowerCase() === email.trim().toLowerCase());
-        send(response, 401, {
-          ok: false,
-          message: listed
-            ? "This person is in the directory, but no login has been created. HR adds the login in User Management. The first sign-in is where the password is chosen."
-            : "The email or password is incorrect.",
-        });
+      const resolved = resolveLoginTenant(email);
+      if ("error" in resolved) {
+        send(response, 401, { ok: false, message: resolved.error });
         return;
       }
-      if (account.passwordHash && !verifyPassword(password, account.passwordHash)) {
-        send(response, 401, { ok: false, message: "The email or password is incorrect." });
+      if (resolved.blocked) {
+        send(response, 403, { ok: false, message: resolved.blocked });
         return;
       }
-      if (!account.passwordHash) {
-        send(response, 200, { ok: false, setup: true, invited: account.status === "invited" });
-        return;
-      }
-      if (account.status === "suspended") {
-        send(response, 403, { ok: false, message: "This account is suspended. An administrator has to reactivate it." });
-        return;
-      }
-      if (account.status === "deactivated") {
-        send(response, 403, { ok: false, message: "This account is deactivated." });
-        return;
-      }
-      const token = createSession(account.id);
-      send(response, 200, { ok: true, state: presentWorkspace(source, account.id) }, { "set-cookie": cookieHeader(token, request) });
+      await runWithTenantAsync(resolved.ctx, async () => {
+        const source = readWorkspace();
+        const account = findAccountByEmail(source.accounts, email);
+        if (!account) {
+          const listed = source.employees.some((item) => item.email.toLowerCase() === email.trim().toLowerCase());
+          send(response, 401, {
+            ok: false,
+            message: listed
+              ? "This person is in the directory, but no login has been created. HR adds the login in User Management. The first sign-in is where the password is chosen."
+              : "The email or password is incorrect.",
+          });
+          return;
+        }
+        if (account.passwordHash && !verifyPassword(password, account.passwordHash)) {
+          send(response, 401, { ok: false, message: "The email or password is incorrect." });
+          return;
+        }
+        if (!account.passwordHash) {
+          send(response, 200, { ok: false, setup: true, invited: account.status === "invited" });
+          return;
+        }
+        if (account.status === "suspended") {
+          send(response, 403, { ok: false, message: "This account is suspended. An administrator has to reactivate it." });
+          return;
+        }
+        if (account.status === "deactivated") {
+          send(response, 403, { ok: false, message: "This account is deactivated." });
+          return;
+        }
+        const token = createSession(account.id, resolved.workspaceId);
+        send(response, 200, { ok: true, state: presentWorkspace(source, account.id) }, { "set-cookie": cookieHeader(token, request) });
+      });
       return;
     }
 
@@ -254,57 +350,93 @@ const server = createServer(async (request, response) => {
       const email = typeof body.email === "string" ? body.email : "";
       const password = typeof body.password === "string" ? body.password : "";
       const confirm = typeof body.confirm === "string" ? body.confirm : "";
-      const source = readWorkspace();
-      const account = isValidEmail(email) ? findAccountByEmail(source.accounts, email) : undefined;
-      if (!account) {
+      if (!isValidEmail(email)) {
         send(response, 401, { ok: false, message: "The email or password is incorrect." });
         return;
       }
-      if (account.passwordHash) {
-        send(response, 400, { ok: false, message: "This account already has a password. Sign in with it." });
+      const resolved = resolveLoginTenant(email);
+      if ("error" in resolved) {
+        send(response, 401, { ok: false, message: resolved.error });
         return;
       }
-      if (account.status === "suspended") {
-        send(response, 403, { ok: false, message: "This account is suspended. An administrator has to reactivate it." });
+      if (resolved.blocked) {
+        send(response, 403, { ok: false, message: resolved.blocked });
         return;
       }
-      if (account.status === "deactivated") {
-        send(response, 403, { ok: false, message: "This account is deactivated." });
-        return;
-      }
-      if (password !== confirm) {
-        send(response, 400, { ok: false, message: "Those passwords do not match." });
-        return;
-      }
-      const problem = passwordProblem(password, account.email);
-      if (problem) {
-        send(response, 400, { ok: false, message: problem });
-        return;
-      }
-      let next = source;
-      if (account.status === "invited") {
-        const outcome = acceptInvitation(source, account.id);
+      await runWithTenantAsync(resolved.ctx, async () => {
+        const source = readWorkspace();
+        const account = findAccountByEmail(source.accounts, email);
+        if (!account) {
+          send(response, 401, { ok: false, message: "The email or password is incorrect." });
+          return;
+        }
+        if (account.passwordHash) {
+          send(response, 400, { ok: false, message: "This account already has a password. Sign in with it." });
+          return;
+        }
+        if (account.status === "suspended") {
+          send(response, 403, { ok: false, message: "This account is suspended. An administrator has to reactivate it." });
+          return;
+        }
+        if (account.status === "deactivated") {
+          send(response, 403, { ok: false, message: "This account is deactivated." });
+          return;
+        }
+        if (password !== confirm) {
+          send(response, 400, { ok: false, message: "Those passwords do not match." });
+          return;
+        }
+        const problem = passwordProblem(password, account.email);
+        if (problem) {
+          send(response, 400, { ok: false, message: problem });
+          return;
+        }
+        let next = source;
+        if (account.status === "invited") {
+          const outcome = acceptInvitation(source, account.id);
+          if (!outcome.result.ok) {
+            send(response, 400, { ok: false, message: outcome.result.message });
+            return;
+          }
+          next = { ...outcome.state, currentUserId: null };
+        }
+        const outcome = setAccountPassword(next, account.id, hashPassword(password));
         if (!outcome.result.ok) {
           send(response, 400, { ok: false, message: outcome.result.message });
           return;
         }
-        next = { ...outcome.state, currentUserId: null };
-      }
-      const outcome = setAccountPassword(next, account.id, hashPassword(password));
-      if (!outcome.result.ok) {
-        send(response, 400, { ok: false, message: outcome.result.message });
-        return;
-      }
-      const saved = { ...outcome.state, currentUserId: null };
-      writeWorkspace(saved);
-      const token = createSession(account.id);
-      send(response, 200, { ok: true, state: presentWorkspace(saved, account.id) }, { "set-cookie": cookieHeader(token, request) });
+        const saved = { ...outcome.state, currentUserId: null };
+        writeWorkspace(saved);
+        const token = createSession(account.id, resolved.workspaceId);
+        send(response, 200, { ok: true, state: presentWorkspace(saved, account.id) }, { "set-cookie": cookieHeader(token, request) });
+      });
       return;
     }
 
+    // Authenticated client routes require a bound tenant context.
+    {
+      const session = bindClientSession(request);
+      if (url.pathname.startsWith("/api/") && url.pathname !== "/api/auth/accept") {
+        if (!session) {
+          // Fall through only for endpoints that still check auth themselves below —
+          // password and the rest expect a session; reject early when missing.
+          if (request.method === "POST" && url.pathname === "/api/auth/password") {
+            send(response, 401, { ok: false, message: "Sign in to continue." });
+            return;
+          }
+        } else {
+          const blocked = workspaceBlockedResponse(session.workspaceId);
+          if (blocked && !url.pathname.startsWith("/api/auth/")) {
+            send(response, blocked.status, { ok: false, message: blocked.message });
+            return;
+          }
+        }
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/api/auth/password") {
-      const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const session = bindClientSession(request);
+      const { source, accountId } = viewerState(session?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -341,7 +473,7 @@ const server = createServer(async (request, response) => {
     const photoEmployeeId = employeeIdFromPhotoPath(url.pathname);
     if (photoEmployeeId && (request.method === "GET" || request.method === "POST" || request.method === "DELETE")) {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -419,7 +551,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/attendance/place") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -470,7 +602,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/payslips/preview") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -513,7 +645,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/payslips/generate") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -569,7 +701,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/payslips/generate-batch") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -630,7 +762,7 @@ const server = createServer(async (request, response) => {
     const payslipMatch = url.pathname.match(/^\/api\/payslips\/([^/]+)\/pdf$/i);
     if (request.method === "GET" && payslipMatch) {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -676,7 +808,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/policies/import-folder") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -703,7 +835,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/policies/backfill-extract") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -727,7 +859,7 @@ const server = createServer(async (request, response) => {
     const policyFileMatch = url.pathname.match(/^\/api\/policies\/([^/]+)\/file(?:\/([^/]+))?$/);
     if (policyFileMatch && (request.method === "GET" || request.method === "POST")) {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -862,7 +994,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/actions") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -875,6 +1007,18 @@ const server = createServer(async (request, response) => {
         return;
       }
       const input = body.input && typeof body.input === "object" ? body.input as Record<string, any> : {};
+      const clientSession = bindClientSession(request);
+      if (name === "saveEmployee") {
+        const existingId = typeof input.id === "string" ? input.id : "";
+        const isNew = !existingId || !source.employees.some((item) => item.id === existingId);
+        if (isNew && clientSession) {
+          const limitMessage = enforceEmployeeLimit(source, clientSession.workspaceId);
+          if (limitMessage) {
+            send(response, 200, { result: { ok: false, message: limitMessage }, toast: limitMessage, tone: "error" });
+            return;
+          }
+        }
+      }
       const before = { ...source, currentUserId: accountId };
       const outcome = handler(before, input);
       if (!outcome.result.ok) {
@@ -905,7 +1049,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/microsoft365/test") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -930,7 +1074,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/automation/health") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -969,7 +1113,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/automation/attendance-reminder") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -999,7 +1143,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/automation/attendance-reminder/preview") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;
@@ -1017,7 +1161,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/automation/test") {
       const token = tokenFrom(request);
-      const { source, accountId } = viewerState(readSession(token));
+      const { source, accountId } = viewerState(bindClientSession(request)?.accountId ?? null);
       if (!accountId) {
         send(response, 401, { ok: false, message: "Sign in to continue." });
         return;

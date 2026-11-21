@@ -1,8 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getTenantContext } from "./tenant/context.ts";
 
 const MAX_BYTES = 2 * 1024 * 1024;
-const directory = join(process.cwd(), "data", "photos");
+
+function photosDirectory(): string {
+  const ctx = getTenantContext();
+  if (!ctx) throw new Error("Tenant context is required for photo storage.");
+  return join(ctx.dataDir, "photos");
+}
 
 function safeId(employeeId: string): string | null {
   return /^emp_[a-z0-9_]+$/i.test(employeeId) ? employeeId : null;
@@ -11,7 +17,7 @@ function safeId(employeeId: string): string | null {
 export function photoFile(employeeId: string): string | null {
   const id = safeId(employeeId);
   if (!id) return null;
-  return join(directory, `${id}.jpg`);
+  return join(photosDirectory(), `${id}.jpg`);
 }
 
 export function isJpeg(bytes: Buffer): boolean {
@@ -25,7 +31,7 @@ export function writePhoto(employeeId: string, bytes: Buffer): string | null {
   if (bytes.length === 0) return "Choose an image before saving.";
   if (bytes.length > MAX_BYTES) return "That image is larger than 2 MB.";
   if (!isJpeg(bytes)) return "Use a JPEG, PNG, or WebP image. The preview is saved as a JPEG.";
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(photosDirectory(), { recursive: true });
   writeFileSync(file, bytes);
   return null;
 }
@@ -38,6 +44,5 @@ export function readPhoto(employeeId: string): Buffer | null {
 
 export function deletePhoto(employeeId: string): void {
   const file = photoFile(employeeId);
-  if (!file || !existsSync(file)) return;
-  rmSync(file);
+  if (file && existsSync(file)) rmSync(file);
 }
