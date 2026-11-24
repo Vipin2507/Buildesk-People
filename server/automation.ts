@@ -33,6 +33,8 @@ export type DispatchInput = {
   to: DispatchTarget;
   /** When true, ignore global kill switch (manual tests / broadcasts). */
   bypassGlobalSwitch?: boolean;
+  /** When set, only these rule ids may fire (prevents duplicate-channel fan-out). */
+  onlyRuleIds?: string[];
 };
 
 function pause(ms: number): Promise<void> {
@@ -124,9 +126,13 @@ export async function dispatchAutomation(state: AppState, input: DispatchInput):
   let config = normalizeAutomationConfig(state.automation);
   if (!input.bypassGlobalSwitch && !config.settings.automationsEnabled) return state;
 
-  const rules = input.bypassGlobalSwitch
+  let rules = input.bypassGlobalSwitch
     ? config.rules.filter((rule) => rule.isActive && rule.trigger === input.trigger)
     : matchingRules(config, input.trigger);
+  if (input.onlyRuleIds?.length) {
+    const allowed = new Set(input.onlyRuleIds);
+    rules = rules.filter((rule) => allowed.has(rule.id));
+  }
 
   if (rules.length === 0) return state;
 

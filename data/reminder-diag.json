@@ -1,0 +1,49 @@
+[
+  {
+    "label": "legacy",
+    "org": "Craving Code",
+    "enabled": false,
+    "employees": 2,
+    "loginRules": [
+      {
+        "id": "rule_attendance_login_reminder_wa",
+        "channel": "whatsapp",
+        "active": true
+      }
+    ],
+    "logoutRules": [
+      {
+        "id": "rule_attendance_logout_reminder_wa",
+        "channel": "whatsapp",
+        "active": true
+      }
+    ]
+  },
+  {
+    "label": "smoke-acme-mwq6l2dx/ws_b592va2dy",
+    "org": "Smoke Acme",
+    "enabled": false,
+    "employees": 1,
+    "loginRules": [
+      {
+        "id": "rule_attendance_login_reminder_wa",
+        "channel": "whatsapp",
+        "active": true
+      }
+    ],
+    "logoutRules": [
+      {
+        "id": "rule_attendance_logout_reminder_wa",
+        "channel": "whatsapp",
+        "active": true
+      }
+    ]
+  },
+  {
+    "legacyAllowed": true,
+    "schedulerWouldRun": [
+      "ws_b592va2dy",
+      "legacy"
+    ]
+  }
+]

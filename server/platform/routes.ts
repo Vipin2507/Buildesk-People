@@ -312,12 +312,15 @@ export async function handlePlatformRequest(
 
   if (request.method === "POST" && url.pathname === "/api/platform/workspaces") {
     const body = await readBody(request);
+    const statusRaw = String(body.status || "").trim().toLowerCase();
+    const status = statusRaw === "trial" || statusRaw === "active" ? statusRaw : undefined;
     const result = provisionWorkspace({
       companyName: String(body.companyName || ""),
       slug: typeof body.slug === "string" ? body.slug : undefined,
       adminEmail: String(body.adminEmail || ""),
       adminDisplayName: String(body.adminDisplayName || ""),
       planId: String(body.planId || ""),
+      status,
       expiresAt: typeof body.expiresAt === "string" && body.expiresAt ? body.expiresAt : null,
       trialDays: typeof body.trialDays === "number" ? body.trialDays : undefined,
       notes: typeof body.notes === "string" ? body.notes : "",

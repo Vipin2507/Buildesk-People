@@ -93,14 +93,26 @@ function inReminderWindow(nowHhmm: string, remindAt: string, boundaryHhmm: strin
   return now >= remind || now < boundary;
 }
 
+/** One rule per channel so a duplicated login/logout rule cannot WhatsApp (or email) twice. */
+function uniqueChannelRules(state: AppState, trigger: AutomationTrigger) {
+  const rules = matchingRules(normalizeAutomationConfig(state.automation), trigger);
+  const seen = new Set<string>();
+  return rules.filter((rule) => {
+    if (seen.has(rule.channel)) return false;
+    seen.add(rule.channel);
+    return true;
+  });
+}
+
 async function sendBatch(
   state: AppState,
   trigger: AutomationTrigger,
   varsBase: Record<string, string>,
   shouldSkip: (person: Employee) => boolean,
 ): Promise<{ state: AppState; attempted: number; skipped: number }> {
-  const rules = matchingRules(normalizeAutomationConfig(state.automation), trigger);
+  const rules = uniqueChannelRules(state, trigger);
   if (rules.length === 0) return { state, attempted: 0, skipped: 0 };
+  const onlyRuleIds = rules.map((rule) => rule.id);
 
   let working = state;
   let attempted = 0;
@@ -117,6 +129,7 @@ async function sendBatch(
     attempted += 1;
     working = await dispatchAutomation(working, {
       trigger,
+      onlyRuleIds,
       vars: {
         ...varsBase,
         employeeName: fullName(person),
@@ -192,8 +205,22 @@ export async function runAttendanceReminder(
     };
   }
 
+  // Claim the daily slot before sending so overlapping ticks / processes cannot double-fire.
+  if (!options.force) {
+    const claimed = withReminderMark(state, kind === "login" ? { loginOn: date } : { logoutOn: date });
+    writeWorkspace({ ...claimed, currentUserId: null });
+    state = claimed;
+  }
+
+  const enabledConfig = normalizeAutomationConfig(state.automation);
   const result = await sendBatch(
-    { ...state, automation: { ...config, settings: { ...config.settings, automationsEnabled: true } } },
+    {
+      ...state,
+      automation: {
+        ...enabledConfig,
+        settings: { ...enabledConfig.settings, automationsEnabled: true },
+      },
+    },
     trigger,
     {
       date,
@@ -256,11 +283,10 @@ function schedulerWorkspaceIds(): string[] {
   const ids = listWorkspaces()
     .filter((item) => item.provisioningStatus === "ready" && !workspaceAccessBlocked(item))
     .map((item) => item.id);
-  if (legacySingleTenantAllowed() && existsSync(legacyDbPath()) && !ids.includes("legacy")) {
-    ids.push("legacy");
-  }
-  if (ids.length === 0 && legacySingleTenantAllowed() && existsSync(legacyDbPath())) return ["legacy"];
-  return ids;
+  // Never run legacy alongside provisioned tenants — that double-sends when data was copied/adopted.
+  if (ids.length > 0) return ids;
+  if (legacySingleTenantAllowed() && existsSync(legacyDbPath())) return ["legacy"];
+  return [];
 }
 
 export async function tickAttendanceReminders(): Promise<void> {

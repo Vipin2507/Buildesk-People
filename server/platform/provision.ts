@@ -25,6 +25,8 @@ export type ProvisionInput = {
   adminEmail: string;
   adminDisplayName: string;
   planId: string;
+  /** Explicit lifecycle. Defaults to active unless trialDays > 0 without status. */
+  status?: "active" | "trial";
   expiresAt?: string | null;
   trialDays?: number;
   notes?: string;
@@ -121,10 +123,12 @@ export function provisionWorkspace(input: ProvisionInput): ProvisionResult {
   const dbPath = tenantDbPathFor(workspaceId);
   const dataDir = tenantDataDirFor(workspaceId);
   const at = nowIso();
+  const wantsTrial = input.status === "trial" || (input.status !== "active" && Boolean(input.trialDays && input.trialDays > 0));
   let expiresAt = input.expiresAt || null;
-  if (!expiresAt && input.trialDays && input.trialDays > 0) {
+  if (wantsTrial && !expiresAt) {
+    const days = input.trialDays && input.trialDays > 0 ? input.trialDays : 30;
     const d = new Date();
-    d.setDate(d.getDate() + input.trialDays);
+    d.setDate(d.getDate() + days);
     expiresAt = d.toISOString().slice(0, 10);
   }
 
@@ -132,7 +136,7 @@ export function provisionWorkspace(input: ProvisionInput): ProvisionResult {
     id: workspaceId,
     slug,
     companyName,
-    status: expiresAt ? "trial" : "active",
+    status: wantsTrial ? "trial" : "active",
     planId: plan.id,
     adminEmail,
     adminDisplayName: input.adminDisplayName.trim() || adminEmail,

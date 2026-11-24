@@ -1698,10 +1698,10 @@ html.theme-switching .signin-card {
 .hr-meetings-module .timeline.compact li { padding: 8px 0; border-top: 1px solid var(--border); }
 .hr-meetings-module .timeline.compact li:first-child { border-top: 0; }
 
-/* —— Platform Admin —— */
+/* â€”â€” Platform Admin â€”â€” */
 .platform-shell {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: minmax(240px, 280px) 1fr;
   min-height: 100vh;
   background:
     radial-gradient(1200px 500px at 10% -10%, color-mix(in srgb, var(--primary-100) 70%, transparent), transparent 60%),
@@ -1714,28 +1714,78 @@ html.theme-switching .signin-card {
   padding: 21px 13px;
   background: linear-gradient(180deg, var(--primary-800), var(--primary-900));
   color: #fff;
+  min-height: 100vh;
+  box-sizing: border-box;
 }
 .platform-brand {
   display: flex;
   gap: 13px;
   align-items: center;
   padding: 8px 13px;
+  flex-shrink: 0;
 }
-.platform-brand strong { display: block; font-size: 16px; }
-.platform-brand span { display: block; font-size: 13px; opacity: 0.8; }
-.platform-nav nav { display: grid; gap: 8px; flex: 1; }
+.platform-brand strong { display: block; font-size: 16px; line-height: 1.25; }
+.platform-brand span { display: block; font-size: 13px; line-height: 1.3; color: color-mix(in srgb, #fff 78%, transparent); }
+.platform-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  justify-content: flex-start;
+}
 .platform-nav a {
+  display: block;
   color: #fff;
   text-decoration: none;
-  padding: 13px;
+  padding: 10px 13px;
   border-radius: 10px;
-  opacity: 0.88;
+  font-size: 15px;
+  line-height: 1.35;
+  opacity: 0.9;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  flex: 0 0 auto;
 }
-.platform-nav a:hover,
-.platform-nav a.is-active { background: color-mix(in srgb, #fff 14%, transparent); opacity: 1; }
-.platform-nav-foot { padding: 13px; border-top: 1px solid color-mix(in srgb, #fff 18%, transparent); }
-.platform-nav-foot .muted { opacity: 0.75; font-size: 13px; }
-.platform-nav-foot .btn-ghost { color: #fff; }
+.platform-nav a:hover {
+  background: color-mix(in srgb, #fff 12%, transparent);
+  opacity: 1;
+}
+.platform-nav a.is-active {
+  background: color-mix(in srgb, #fff 18%, transparent);
+  opacity: 1;
+  font-weight: 600;
+}
+.platform-nav-foot {
+  margin-top: auto;
+  padding: 13px;
+  border-top: 1px solid color-mix(in srgb, #fff 22%, transparent);
+  flex-shrink: 0;
+  display: grid;
+  gap: 8px;
+}
+.platform-nav-foot p {
+  margin: 0;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.platform-nav-foot .muted {
+  color: color-mix(in srgb, #fff 82%, transparent);
+  font-size: 13px;
+  opacity: 1;
+}
+.platform-nav-foot .btn-ghost {
+  color: #fff;
+  justify-self: start;
+  padding-inline: 0;
+}
+.platform-nav-foot .btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, #fff 12%, transparent);
+}
 .platform-main { padding: 34px; }
 .platform-page { max-width: 1120px; display: grid; gap: 21px; }
 .platform-page-head {
@@ -1871,7 +1921,16 @@ html.theme-switching .signin-card {
 .error-text { color: var(--color-error-text); }
 @media (max-width: 900px) {
   .platform-shell { grid-template-columns: 1fr; }
-  .platform-nav { position: sticky; top: 0; z-index: 5; }
+  .platform-nav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    min-height: 0;
+    gap: 13px;
+    padding: 13px;
+  }
+  .platform-nav nav { flex: 0 0 auto; }
+  .platform-nav-foot { margin-top: 0; }
   .platform-split,
   .platform-filters { grid-template-columns: 1fr; }
   .platform-main { padding: 21px 13px 34px; }
